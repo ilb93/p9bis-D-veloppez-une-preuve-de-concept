@@ -5,54 +5,57 @@ import joblib
 import json
 from pathlib import Path
 
-# =====================================================
-# CONFIG
-# =====================================================
+# ======================================================
+# CONFIG STREAMLIT
+# ======================================================
 st.set_page_config(
-    page_title="DataSpace – Proof of Concept",
+    page_title="Proof of Concept – Amélioration ML",
     layout="wide"
 )
 
 st.title("📊 Proof of Concept – Amélioration d’un modèle ML")
 
-st.markdown("""
-Cette application présente une **preuve de concept** comparant :
+st.markdown(
+    """
+    Cette application présente une **preuve de concept** comparant :
 
-- 🔹 **Modèle baseline** : RidgeClassifier  
-- 🚀 **Modèle récent** : LightGBM  
+    - 🔹 **Modèle baseline** : RidgeClassifier  
+    - 🚀 **Modèle récent** : LightGBM  
 
-🎯 Objectif : démontrer une amélioration de performance via un dashboard simple.
-""")
+    🎯 Objectif : démontrer une **amélioration de performance** via un dashboard simple.
+    """
+)
 
-# =====================================================
-# LOAD ARTEFACTS
-# =====================================================
-ARTIFACTS_DIR = Path("artifacts")
-
+# ======================================================
+# CHARGEMENT DES ARTEFACTS
+# ======================================================
 @st.cache_resource
 def load_artifacts():
-    scaler = joblib.load(ARTIFACTS_DIR / "std_scale.joblib")
-    ridge = joblib.load(ARTIFACTS_DIR / "best_ridge.joblib")
-    lgbm = joblib.load(ARTIFACTS_DIR / "lgbm.joblib")
+    artifacts_path = Path("artifacts")
 
-    with open(ARTIFACTS_DIR / "metadata.json", "r", encoding="utf-8") as f:
+    std_scale = joblib.load(artifacts_path / "std_scale.joblib")
+    imputer = joblib.load(artifacts_path / "imputer_median.joblib")
+    ridge_model = joblib.load(artifacts_path / "best_ridge.joblib")
+    lgbm_model = joblib.load(artifacts_path / "lgbm.joblib")
+
+    with open(artifacts_path / "metadata.json", encoding="utf-8") as f:
         metadata = json.load(f)
 
-    return scaler, ridge, lgbm, metadata
+    return std_scale, imputer, ridge_model, lgbm_model, metadata
 
 
-scaler, ridge_model, lgbm_model, metadata = load_artifacts()
+std_scale, imputer, ridge_model, lgbm_model, metadata = load_artifacts()
 
 RAW_COLS = metadata["raw_feature_columns"]
 COL_MAP = metadata["column_mapping_raw_to_lgbm"]
 
-# =====================================================
-# UPLOAD DATA
-# =====================================================
-st.subheader("📂 Import du jeu de données")
+# ======================================================
+# IMPORT DU CSV D’INFÉRENCE
+# ======================================================
+st.subheader("📂 Import du jeu de données (CSV)")
 
 uploaded_file = st.file_uploader(
-    "Importer un fichier CSV",
+    "Importer un fichier CSV (données d’inférence)",
     type=["csv"]
 )
 
@@ -62,101 +65,138 @@ if uploaded_file is None:
 
 df = pd.read_csv(uploaded_file)
 
-st.success(f"Fichier chargé : {df.shape[0]} lignes, {df.shape[1]} colonnes")
+st.success("Fichier chargé avec succès")
+st.write(f"Shape : {df.shape}")
+st.dataframe(df.head())
 
-# Vérification des colonnes
+# ======================================================
+# CONTRÔLE DES COLONNES
+# ======================================================
 missing_cols = set(RAW_COLS) - set(df.columns)
+extra_cols = set(df.columns) - set(RAW_COLS)
+
 if missing_cols:
-    st.error(f"Colonnes manquantes dans le fichier : {missing_cols}")
+    st.error(f"Colonnes manquantes : {missing_cols}")
     st.stop()
 
-st.subheader("👀 Aperçu du dataset")
-st.dataframe(df.head(), use_container_width=True)
+if extra_cols:
+    st.warning(f"Colonnes ignorées : {extra_cols}")
 
-# =====================================================
-# ROW SELECTION
-# =====================================================
-st.subheader("🎯 Sélection de l’observation")
+df = df[RAW_COLS]
+
+# ======================================================
+# SÉLECTION D’UNE LIGNE
+# ======================================================
+st.subheader("🎯 Sélection d’un individu")
 
 row_id = st.slider(
-    "Choisir une ligne à tester",
+    "Choisir une ligne du dataset",
     min_value=0,
     max_value=len(df) - 1,
     value=0
 )
 
-input_df = df.loc[[row_id], RAW_COLS]
+input_df = df.iloc[[row_id]]
 
-st.markdown("**Données utilisées pour la prédiction :**")
-st.dataframe(input_df, use_container_width=True)
+st.write("Données utilisées pour la prédiction")
+st.dataframe(input_df)
 
-# =====================================================
-# PREPROCESS (INFERENCE ONLY)
-# =====================================================
-def preprocess(df_row):
-    X = df_row.to_numpy(dtype=np.float64)
-    X_scaled = scaler.transform(X)
+# ======================================================
+# PREPROCESSING STRICT (IDENTIQUE AU NOTEBOOK)
+# ======================================================
+def preprocess_for_ridge(df_row):
+    """
+    RidgeClassifier :
+    - AUCUN NaN autorisé
+    - Imputation -> Scaling
+    """
+    X_imputed = pd.DataFrame(
+        imputer.transform(df_row),
+        columns=RAW_COLS
+    )
 
-    X_ridge = pd.DataFrame(X_scaled, columns=RAW_COLS)
-    X_lgbm = X_ridge.rename(columns=COL_MAP)
+    X_scaled = pd.DataFrame(
+        std_scale.transform(X_imputed),
+        columns=RAW_COLS
+    )
 
-    return X_ridge, X_lgbm
+    return X_scaled
 
 
-X_ridge, X_lgbm = preprocess(input_df)
+def preprocess_for_lgbm(df_row):
+    """
+    LightGBM :
+    - Accepte les NaN
+    - Colonnes renommées
+    """
+    X = df_row.copy()
+    X = X.rename(columns=COL_MAP)
+    return X
 
-# =====================================================
-# MODEL CHOICE
-# =====================================================
+
+# ======================================================
+# CHOIX DU MODÈLE
+# ======================================================
 st.subheader("⚙️ Choix du modèle")
 
 model_choice = st.radio(
     "Sélectionner le modèle",
-    ["Baseline – RidgeClassifier", "Nouveau modèle – LightGBM"]
+    [
+        "Baseline – RidgeClassifier",
+        "Nouveau modèle – LightGBM"
+    ]
 )
 
-# =====================================================
-# PREDICTION
-# =====================================================
+# ======================================================
+# PRÉDICTION
+# ======================================================
 if st.button("🔮 Lancer la prédiction"):
 
     if model_choice == "Baseline – RidgeClassifier":
+        X_ridge = preprocess_for_ridge(input_df)
+
         prediction = ridge_model.predict(X_ridge)[0]
         score = ridge_model.decision_function(X_ridge)[0]
-        score_label = "Score (decision function)"
 
     else:
+        X_lgbm = preprocess_for_lgbm(input_df)
+
         prediction = lgbm_model.predict(X_lgbm)[0]
         score = lgbm_model.predict_proba(X_lgbm)[0][1]
-        score_label = "Probabilité classe positive"
 
     st.success("Prédiction effectuée")
 
     col1, col2 = st.columns(2)
+
     with col1:
         st.metric("Classe prédite", int(prediction))
-    with col2:
-        st.metric(score_label, round(float(score), 4))
 
-# =====================================================
-# MODEL COMPARISON
-# =====================================================
+    with col2:
+        st.metric("Score / Probabilité", round(float(score), 4))
+
+# ======================================================
+# COMPARAISON DES MODÈLES
+# ======================================================
 st.subheader("📊 Comparaison des modèles")
 
-st.table(pd.DataFrame({
-    "Modèle": ["RidgeClassifier", "LightGBM"],
-    "Type": ["Baseline", "Récent"],
-    "Capacité non-linéaire": ["Non", "Oui"],
+comparison_df = pd.DataFrame({
+    "Modèle": ["RidgeClassifier (baseline)", "LightGBM (récent)"],
+    "Gestion des NaN": ["❌ Non", "✅ Oui"],
+    "Relations non-linéaires": ["❌ Non", "✅ Oui"],
     "Performance": ["Référence", "Supérieure"]
-}))
+})
 
-# =====================================================
+st.table(comparison_df)
+
+# ======================================================
 # CONCLUSION
-# =====================================================
+# ======================================================
 st.subheader("✅ Conclusion")
 
-st.markdown("""
-- LightGBM capture des relations non linéaires complexes
-- Il surpasse le modèle baseline
-- Cette application constitue une **preuve de concept robuste et déployable**
-""")
+st.markdown(
+    """
+    - Le **modèle LightGBM**, issu d’une veille récente, capture des relations complexes.
+    - Le **RidgeClassifier** sert de **baseline robuste et interprétable**.
+    - Cette application constitue une **preuve de concept complète et déployable**.
+    """
+)
