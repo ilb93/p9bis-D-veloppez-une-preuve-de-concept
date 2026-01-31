@@ -1,220 +1,202 @@
+import streamlit as st
+import pandas as pd
+import numpy as np
+import joblib
 import json
 from pathlib import Path
 
-import joblib
-import numpy as np
-import pandas as pd
-import streamlit as st
-
-
 # ======================================================
-# CONFIG
+# CONFIG STREAMLIT
 # ======================================================
-st.set_page_config(page_title="DataSpace – Proof of Concept", layout="wide")
-
-st.title("📊 Proof of Concept – Amélioration d’un modèle ML")
-st.markdown(
-    """
-Cette application présente une **preuve de concept** comparant :
-- **Modèle baseline : RidgeClassifier**
-- **Modèle récent : LightGBM**
-
-👉 Workflow : vous **importez un CSV**, vous choisissez **une ligne**, puis vous lancez une **prédiction** avec le modèle sélectionné.
-"""
+st.set_page_config(
+    page_title="Proof of Concept – Amélioration ML",
+    layout="wide"
 )
 
-REPO_ROOT = Path(__file__).resolve().parents[1]
-ARTIFACTS_DIR = REPO_ROOT / "artifacts"
+st.title("📊 Proof of Concept – Amélioration d’un modèle ML")
 
+st.markdown(
+    """
+    Cette application présente une **preuve de concept** comparant :
+
+    - 🔹 **Modèle baseline** : RidgeClassifier  
+    - 🚀 **Modèle récent** : LightGBM  
+
+    🎯 Objectif : démontrer une **amélioration de performance** via un dashboard simple.
+    """
+)
 
 # ======================================================
 # CHARGEMENT DES ARTEFACTS
 # ======================================================
 @st.cache_resource
 def load_artifacts():
-    # Sécurité : chemins absolus (évite les surprises sur Streamlit Cloud)
-    std_scale_path = ARTIFACTS_DIR / "std_scale.joblib"
-    imputer_path = ARTIFACTS_DIR / "imputer_median.joblib"
-    ridge_path = ARTIFACTS_DIR / "best_ridge.joblib"
-    lgbm_path = ARTIFACTS_DIR / "lgbm.joblib"
-    metadata_path = ARTIFACTS_DIR / "metadata.json"
+    artifacts_path = Path("artifacts")
 
-    missing = [p.name for p in [std_scale_path, imputer_path, ridge_path, lgbm_path, metadata_path] if not p.exists()]
-    if missing:
-        raise FileNotFoundError(
-            f"Artefacts manquants dans /artifacts : {missing}. "
-            f"Vérifie que ton repo contient bien le dossier artifacts au même niveau que streamlit_app/."
-        )
+    std_scale = joblib.load(artifacts_path / "std_scale.joblib")
+    imputer = joblib.load(artifacts_path / "imputer_median.joblib")
+    ridge_model = joblib.load(artifacts_path / "best_ridge.joblib")
+    lgbm_model = joblib.load(artifacts_path / "lgbm.joblib")
 
-    std_scale = joblib.load(std_scale_path)
-    imputer = joblib.load(imputer_path)
-    ridge_model = joblib.load(ridge_path)
-    lgbm_model = joblib.load(lgbm_path)
-
-    with open(metadata_path, "r", encoding="utf-8") as f:
+    with open(artifacts_path / "metadata.json", encoding="utf-8") as f:
         metadata = json.load(f)
 
-    raw_cols = metadata["raw_feature_columns"]
-    col_map = metadata["column_mapping_raw_to_lgbm"]
-
-    return std_scale, imputer, ridge_model, lgbm_model, raw_cols, col_map, metadata
+    return std_scale, imputer, ridge_model, lgbm_model, metadata
 
 
-std_scale, imputer, ridge_model, lgbm_model, RAW_COLS, COL_MAP, metadata = load_artifacts()
+std_scale, imputer, ridge_model, lgbm_model, metadata = load_artifacts()
 
+RAW_COLS = metadata["raw_feature_columns"]
+COL_MAP = metadata["column_mapping_raw_to_lgbm"]
 
 # ======================================================
-# UPLOAD CSV
+# IMPORT DU CSV D’INFÉRENCE
 # ======================================================
-st.subheader("📁 Import du jeu de données (CSV)")
+st.subheader("📂 Import du jeu de données (CSV)")
 
-uploaded = st.file_uploader(
-    "Importer un fichier CSV (doit contenir au minimum les colonnes attendues par le modèle)",
-    type=["csv"],
+uploaded_file = st.file_uploader(
+    "Importer un fichier CSV (données d’inférence)",
+    type=["csv"]
 )
 
-if uploaded is None:
+if uploaded_file is None:
     st.info("Veuillez importer un fichier CSV pour continuer.")
     st.stop()
 
-df = pd.read_csv(uploaded)
+df = pd.read_csv(uploaded_file)
 
-st.write("Aperçu du fichier importé :")
-st.dataframe(df.head(10), use_container_width=True)
-
+st.success("Fichier chargé avec succès")
+st.write(f"Shape : {df.shape}")
+st.dataframe(df.head())
 
 # ======================================================
-# VALIDATION COLONNES
+# CONTRÔLE DES COLONNES
 # ======================================================
-missing_cols = [c for c in RAW_COLS if c not in df.columns]
+missing_cols = set(RAW_COLS) - set(df.columns)
+extra_cols = set(df.columns) - set(RAW_COLS)
+
 if missing_cols:
-    st.error(
-        "❌ Colonnes manquantes dans ton CSV.\n\n"
-        f"Il manque {len(missing_cols)} colonnes (extrait) : {missing_cols[:20]}\n\n"
-        "➡️ Solution : exporte un CSV depuis ton notebook **avec exactement les mêmes features** que le modèle."
-    )
+    st.error(f"Colonnes manquantes : {missing_cols}")
     st.stop()
 
+if extra_cols:
+    st.warning(f"Colonnes ignorées : {extra_cols}")
+
+df = df[RAW_COLS]
 
 # ======================================================
-# SELECTION LIGNE
+# SÉLECTION D’UNE LIGNE
 # ======================================================
 st.subheader("🎯 Sélection d’un individu")
 
 row_id = st.slider(
     "Choisir une ligne du dataset",
     min_value=0,
-    max_value=max(0, len(df) - 1),
-    value=0,
+    max_value=len(df) - 1,
+    value=0
 )
 
-input_df = df.loc[[row_id], RAW_COLS].copy()
+input_df = df.iloc[[row_id]]
 
-st.write("Données utilisées pour la prédiction (ligne sélectionnée) :")
-st.dataframe(input_df, use_container_width=True)
-
+st.write("Données utilisées pour la prédiction")
+st.dataframe(input_df)
 
 # ======================================================
-# PREPROCESSING (scaler -> imputer) + mapping LightGBM
+# PREPROCESSING STRICT (IDENTIQUE AU NOTEBOOK)
 # ======================================================
-def preprocess_for_models(df_row: pd.DataFrame):
+def preprocess_for_ridge(df_row):
     """
-    df_row: DataFrame 1 ligne avec colonnes RAW_COLS
-
-    Sorties:
-    - X_ridge: np.ndarray shape (1, n_features) prêt pour Ridge
-    - X_lgbm:  pd.DataFrame avec colonnes renommées pour LightGBM
+    RidgeClassifier :
+    - AUCUN NaN autorisé
+    - Imputation -> Scaling
     """
-    # 1) coercition numérique (évite dtype object)
-    X = df_row.apply(pd.to_numeric, errors="coerce").to_numpy(dtype=float)
-
-    # 2) scaler (comme notebook)
-    X_scaled = std_scale.transform(X)
-
-    # 3) imputer (comme notebook) -> IMPORTANT pour Ridge (NaN interdit)
-    X_imputed = imputer.transform(X_scaled)
-
-    # Ridge : array
-    X_ridge = X_imputed
-
-    # LightGBM : DataFrame + mapping colonnes
-    X_lgbm_df = pd.DataFrame(X_imputed, columns=RAW_COLS).rename(columns=COL_MAP)
-
-    return X_ridge, X_lgbm_df
-
-
-try:
-    X_ridge, X_lgbm = preprocess_for_models(input_df)
-except Exception as e:
-    st.error(
-        "Erreur pendant le preprocessing.\n\n"
-        "Causes fréquentes : valeurs non numériques, colonnes mal typées, ou incompatibilité sklearn.\n\n"
-        f"Détail : {type(e).__name__} — {e}"
+    X_imputed = pd.DataFrame(
+        imputer.transform(df_row),
+        columns=RAW_COLS
     )
-    st.stop()
+
+    X_scaled = pd.DataFrame(
+        std_scale.transform(X_imputed),
+        columns=RAW_COLS
+    )
+
+    return X_scaled
+
+
+def preprocess_for_lgbm(df_row):
+    """
+    LightGBM :
+    - Accepte les NaN
+    - Colonnes renommées
+    """
+    X = df_row.copy()
+    X = X.rename(columns=COL_MAP)
+    return X
 
 
 # ======================================================
-# CHOIX MODELE + PREDICTION
+# CHOIX DU MODÈLE
 # ======================================================
 st.subheader("⚙️ Choix du modèle")
 
 model_choice = st.radio(
     "Sélectionner le modèle",
-    ["Baseline – RidgeClassifier", "Nouveau modèle – LightGBM"],
-    index=0,
+    [
+        "Baseline – RidgeClassifier",
+        "Nouveau modèle – LightGBM"
+    ]
 )
 
+# ======================================================
+# PRÉDICTION
+# ======================================================
 if st.button("🔮 Lancer la prédiction"):
-    try:
-        if model_choice == "Baseline – RidgeClassifier":
-            pred = int(ridge_model.predict(X_ridge)[0])
-            score = float(ridge_model.decision_function(X_ridge)[0])
-            score_label = "Score (decision_function)"
-        else:
-            pred = int(lgbm_model.predict(X_lgbm)[0])
-            proba = lgbm_model.predict_proba(X_lgbm)[0][1]
-            score = float(proba)
-            score_label = "Probabilité classe 1"
 
-        st.success("✅ Prédiction effectuée")
+    if model_choice == "Baseline – RidgeClassifier":
+        X_ridge = preprocess_for_ridge(input_df)
 
-        c1, c2 = st.columns(2)
-        with c1:
-            st.metric("Classe prédite", pred)
-        with c2:
-            st.metric(score_label, round(score, 4))
+        prediction = ridge_model.predict(X_ridge)[0]
+        score = ridge_model.decision_function(X_ridge)[0]
 
-    except Exception as e:
-        st.error(
-            "Erreur au moment de la prédiction.\n\n"
-            "Si l’erreur mentionne scikit-learn / imputer / attributes : "
-            "➡️ c’est quasi sûr que ton environnement Streamlit n’a pas les mêmes versions que ton notebook.\n\n"
-            f"Détail : {type(e).__name__} — {e}"
-        )
+    else:
+        X_lgbm = preprocess_for_lgbm(input_df)
 
+        prediction = lgbm_model.predict(X_lgbm)[0]
+        score = lgbm_model.predict_proba(X_lgbm)[0][1]
+
+    st.success("Prédiction effectuée")
+
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.metric("Classe prédite", int(prediction))
+
+    with col2:
+        st.metric("Score / Probabilité", round(float(score), 4))
 
 # ======================================================
-# COMPARAISON (simple, clair)
+# COMPARAISON DES MODÈLES
 # ======================================================
 st.subheader("📊 Comparaison des modèles")
 
-comparison_df = pd.DataFrame(
-    {
-        "Modèle": ["RidgeClassifier (baseline)", "LightGBM (récent)"],
-        "Gestion des NaN": ["Non (doit être imputé)", "Oui (mais ici imputé aussi)"],
-        "Relations non-linéaires": ["Non", "Oui"],
-        "Performance": ["Référence", "Supérieure"],
-    }
-)
+comparison_df = pd.DataFrame({
+    "Modèle": ["RidgeClassifier (baseline)", "LightGBM (récent)"],
+    "Gestion des NaN": ["❌ Non", "✅ Oui"],
+    "Relations non-linéaires": ["❌ Non", "✅ Oui"],
+    "Performance": ["Référence", "Supérieure"]
+})
 
-st.dataframe(comparison_df, use_container_width=True)
+st.table(comparison_df)
 
+# ======================================================
+# CONCLUSION
+# ======================================================
 st.subheader("✅ Conclusion")
+
 st.markdown(
     """
-- **RidgeClassifier** sert de **baseline** simple et robuste.
-- **LightGBM** (modèle récent) capture des relations **non-linéaires** et améliore les performances.
-- Le dashboard démontre la preuve de concept via **import CSV → sélection ligne → choix modèle → prédiction**.
-"""
+    - Le **modèle LightGBM**, issu d’une veille récente, capture des relations complexes.
+    - Le **RidgeClassifier** sert de **baseline robuste et interprétable**.
+    - Cette application constitue une **preuve de concept complète et déployable**.
+    """
 )
