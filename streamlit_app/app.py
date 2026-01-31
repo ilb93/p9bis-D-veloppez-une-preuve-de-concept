@@ -1,115 +1,165 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
 import joblib
 import json
-from pathlib import Path
-import numpy as np
-import pandas as pd
 
 # ===============================
-# CONFIG
+# CONFIG STREAMLIT
 # ===============================
 st.set_page_config(
-    page_title="Proof of Concept – Amélioration d’un modèle ML",
+    page_title="DataSpace – Proof of Concept",
     layout="wide"
 )
 
-ARTIFACTS_DIR = Path("artifacts")
-
-# ===============================
-# LOAD ARTIFACTS
-# ===============================
-@st.cache_resource
-def load_artifacts():
-    ridge_model = joblib.load(ARTIFACTS_DIR / "best_ridge.joblib")
-    lgbm_model = joblib.load(ARTIFACTS_DIR / "lgbm.joblib")
-    scaler = joblib.load(ARTIFACTS_DIR / "std_scale.joblib")
-    imputer = joblib.load(ARTIFACTS_DIR / "imputer_median.joblib")
-
-    with open(ARTIFACTS_DIR / "metadata.json", "r") as f:
-        metadata = json.load(f)
-
-    return ridge_model, lgbm_model, scaler, imputer, metadata
-
-
-ridge_model, lgbm_model, scaler, imputer, metadata = load_artifacts()
-
-# ===============================
-# UI – HEADER
-# ===============================
 st.title("📊 Proof of Concept – Amélioration d’un modèle ML")
 
 st.markdown(
     """
-Cette application présente une **preuve de concept** comparant :
+    Cette application présente une **preuve de concept** comparant :
 
-- un **modèle baseline** : RidgeClassifier  
-- un **modèle récent et plus performant** : LightGBM  
+    - un **modèle baseline** (RidgeClassifier)
+    - un **modèle récent et plus performant** (LightGBM)
 
-🎯 Objectif : **démontrer l’amélioration des performances** via un dashboard simple.
-"""
+    🎯 Objectif : démontrer l’amélioration des performances via un dashboard interactif.
+    """
 )
 
 # ===============================
-# MODEL SELECTION
+# CHARGEMENT DES ARTEFACTS
 # ===============================
-st.sidebar.header("Paramètres")
+@st.cache_resource
+def load_artifacts():
+    std_scaler = joblib.load("artifacts/std_scale.joblib")
+    imputer = joblib.load("artifacts/imputer_median.joblib")
+    ridge_model = joblib.load("artifacts/best_ridge.joblib")
+    lgbm_model = joblib.load("artifacts/lgbm.joblib")
 
-model_choice = st.sidebar.selectbox(
-    "Choisir le modèle",
-    ["Baseline – RidgeClassifier", "Modèle avancé – LightGBM"]
+    with open("artifacts/metadata.json", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    return std_scaler, imputer, ridge_model, lgbm_model, metadata
+
+
+std_scaler, imputer, ridge_model, lgbm_model, metadata = load_artifacts()
+
+RAW_COLS = metadata["raw_feature_columns"]
+COL_MAP = metadata["column_mapping_raw_to_lgbm"]
+
+# ===============================
+# SAISIE UTILISATEUR (POC)
+# ===============================
+st.subheader("🧩 Saisie des variables d’entrée")
+
+st.markdown(
+    """
+    👉 Pour la preuve de concept, vous pouvez modifier manuellement les valeurs
+    d’un individu fictif afin de comparer les prédictions des modèles.
+    """
 )
 
-# ===============================
-# FEATURE INPUT (SIMPLIFIÉ)
-# ===============================
-st.subheader("Entrée utilisateur (exemple)")
+input_data = {}
 
-raw_features = metadata["raw_feature_columns"]
-
-user_input = {}
-for feature in raw_features:
-    user_input[feature] = st.number_input(
-        feature,
-        value=0.0
+for col in RAW_COLS:
+    input_data[col] = st.number_input(
+        label=col,
+        value=0.0,
+        step=1.0,
+        format="%.2f"
     )
 
-X_input = pd.DataFrame([user_input])
+input_df = pd.DataFrame([input_data])
 
-# Preprocessing
-X_imputed = imputer.transform(X_input)
-X_scaled = scaler.transform(X_imputed)
+st.subheader("📋 Données utilisées pour la prédiction")
+st.dataframe(input_df)
 
 # ===============================
-# PREDICTION
+# PREPROCESSING (ALIGNÉ NOTEBOOK)
 # ===============================
+def preprocess(df_row):
+    # 1️⃣ Imputation sur données BRUTES
+    X_imputed = pd.DataFrame(
+        imputer.transform(df_row),
+        columns=RAW_COLS
+    )
+
+    # 2️⃣ Standardisation après imputation
+    X_scaled = pd.DataFrame(
+        std_scaler.transform(X_imputed),
+        columns=RAW_COLS
+    )
+
+    # 3️⃣ Renommage pour LightGBM
+    X_lgbm = X_scaled.rename(columns=COL_MAP)
+
+    return X_scaled, X_lgbm
+
+
+X_ridge, X_lgbm = preprocess(input_df)
+
+# ===============================
+# CHOIX DU MODÈLE
+# ===============================
+st.subheader("⚙️ Choix du modèle")
+
+model_choice = st.radio(
+    "Sélectionner le modèle",
+    (
+        "Baseline – RidgeClassifier",
+        "Nouveau modèle – LightGBM"
+    )
+)
+
+# ===============================
+# PRÉDICTION
+# ===============================
+st.subheader("🔮 Prédiction")
+
 if st.button("Lancer la prédiction"):
 
-    if model_choice.startswith("Baseline"):
-        score = ridge_model.decision_function(X_scaled)[0]
-        prediction = int(score > 0)
-        st.success("Modèle utilisé : RidgeClassifier (baseline)")
+    if model_choice == "Baseline – RidgeClassifier":
+        prediction = ridge_model.predict(X_ridge)[0]
+        score = ridge_model.decision_function(X_ridge)[0]
+
     else:
-        score = lgbm_model.predict_proba(X_input)[0, 1]
-        prediction = int(score > 0.5)
-        st.success("Modèle utilisé : LightGBM (modèle récent)")
+        prediction = lgbm_model.predict(X_lgbm)[0]
+        score = lgbm_model.predict_proba(X_lgbm)[0][1]
 
-    st.metric("Score du modèle", round(float(score), 4))
-    st.metric("Classe prédite", prediction)
+    st.success("✅ Prédiction effectuée")
 
-# ===============================
-# METADATA DISPLAY
-# ===============================
-with st.expander("📂 Informations techniques (features & mapping)"):
-    st.write("Features utilisées :")
-    st.write(metadata["raw_feature_columns"])
-
-    st.write("Mapping features (LightGBM) :")
-    st.write(metadata["column_mapping_raw_to_lgbm"])
+    col1, col2 = st.columns(2)
+    with col1:
+        st.metric("Classe prédite", int(prediction))
+    with col2:
+        st.metric("Score / Probabilité", round(float(score), 3))
 
 # ===============================
-# FOOTER
+# COMPARAISON DES MODÈLES
 # ===============================
-st.markdown("---")
-st.caption(
-    "POC réalisé dans le cadre d’un test technique DataScience – démonstration de veille et d’amélioration de modèle."
+st.subheader("📊 Comparaison des approches")
+
+comparison_df = pd.DataFrame(
+    {
+        "Modèle": ["RidgeClassifier (baseline)", "LightGBM (récent)"],
+        "Type": ["Linéaire", "Ensemble d’arbres"],
+        "Gestion non-linéarités": ["❌ Non", "✅ Oui"],
+        "Performance globale": ["Référence", "Améliorée"],
+    }
+)
+
+st.table(comparison_df)
+
+# ===============================
+# CONCLUSION
+# ===============================
+st.subheader("✅ Conclusion")
+
+st.markdown(
+    """
+    - Le **RidgeClassifier** sert de **référence simple et robuste**.
+    - Le **LightGBM**, issu d’une veille récente, capte des relations non linéaires.
+    - Les résultats confirment une **amélioration des performances**, validant la preuve de concept.
+
+    🚀 Application prête pour un contexte professionnel.
+    """
 )
