@@ -3,25 +3,26 @@ import pandas as pd
 import joblib
 import json
 from pathlib import Path
+import plotly.express as px
 
 # ======================================================
 # CONFIG STREAMLIT
 # ======================================================
 st.set_page_config(
-    page_title="Proof of Concept – Amélioration ML",
+    page_title="Preuve de concept – Prédiction ML",
     layout="wide"
 )
 
-st.title("📊 Proof of Concept – Amélioration d’un modèle ML")
+st.title("📊 Preuve de concept – Prédiction par Machine Learning")
 
 st.markdown(
     """
-    Cette application présente une **preuve de concept** comparant :
+    Ce dashboard illustre une **preuve de concept** basée sur un **modèle LightGBM**,
+    appliqué à des **données structurées**.
 
-    - 🔹 **Modèle baseline** : DummyClassifier (stratified)  
-    - 🚀 **Modèle récent** : LightGBM  
-
-    🎯 Objectif : démontrer visuellement l’intérêt d’un modèle avancé.
+    🎯 Objectif :  
+    permettre l’exploration du jeu de données et visualiser concrètement
+    le **résultat de la prédiction pour un individu donné**.
     """
 )
 
@@ -32,16 +33,15 @@ st.markdown(
 def load_artifacts():
     artifacts_path = Path("artifacts")
 
-    dummy_model = joblib.load(artifacts_path / "dummy_classifier.joblib")
-    lgbm_model = joblib.load(artifacts_path / "lgbm.joblib")
+    model = joblib.load(artifacts_path / "lgbm.joblib")
 
     with open(artifacts_path / "metadata.json", encoding="utf-8") as f:
         metadata = json.load(f)
 
-    return dummy_model, lgbm_model, metadata
+    return model, metadata
 
 
-dummy_model, lgbm_model, metadata = load_artifacts()
+lgbm_model, metadata = load_artifacts()
 
 RAW_COLS = metadata["raw_feature_columns"]
 COL_MAP = metadata["column_mapping_raw_to_lgbm"]
@@ -49,21 +49,21 @@ COL_MAP = metadata["column_mapping_raw_to_lgbm"]
 # ======================================================
 # IMPORT DU CSV
 # ======================================================
-st.subheader("📂 Import du jeu de données (CSV)")
+st.header("1️⃣ Chargement du jeu de données")
 
 uploaded_file = st.file_uploader(
-    "Importer un fichier CSV (données d’inférence)",
+    "Importer un fichier CSV contenant les données d’entrée",
     type=["csv"]
 )
 
 if uploaded_file is None:
-    st.info("Veuillez importer un fichier CSV pour continuer.")
+    st.info("Veuillez importer un fichier CSV pour démarrer l’analyse.")
     st.stop()
 
 df = pd.read_csv(uploaded_file)
 
 st.success("Fichier chargé avec succès")
-st.write(f"Shape : {df.shape}")
+st.write(f"Nombre de lignes : {len(df)} | Nombre de colonnes : {df.shape[1]}")
 st.dataframe(df.head())
 
 # ======================================================
@@ -73,37 +73,100 @@ missing_cols = set(RAW_COLS) - set(df.columns)
 extra_cols = set(df.columns) - set(RAW_COLS)
 
 if missing_cols:
-    st.error(f"Colonnes manquantes : {missing_cols}")
+    st.error(f"Colonnes manquantes dans le fichier : {missing_cols}")
     st.stop()
 
 if extra_cols:
-    st.warning(f"Colonnes ignorées : {extra_cols}")
+    st.warning(
+        "Certaines colonnes ne sont pas utilisées par le modèle "
+        "et seront ignorées."
+    )
 
 df = df[RAW_COLS]
 
-# ======================================================
-# CAST NUMÉRIQUE GLOBAL
-# ======================================================
+# Conversion numérique sécurisée
 df = df.apply(pd.to_numeric, errors="coerce")
 
+if df.empty:
+    st.error("Le fichier ne contient aucune ligne exploitable après nettoyage.")
+    st.stop()
+
 # ======================================================
-# SÉLECTION D’UNE LIGNE (STREAMLIT SAFE)
+# ANALYSE EXPLORATOIRE DES DONNÉES (EDA)
 # ======================================================
-st.subheader("🎯 Sélection d’un individu")
+st.header("2️⃣ Analyse exploratoire des données")
+
+st.subheader("Statistiques descriptives")
+st.dataframe(df.describe().T)
+
+# --- Graphique 1 : distribution d’une variable numérique
+numeric_cols = df.select_dtypes(include="number").columns.tolist()
+
+selected_feature = st.selectbox(
+    "Choisir une variable numérique à analyser",
+    options=numeric_cols
+)
+
+fig_hist = px.histogram(
+    df,
+    x=selected_feature,
+    nbins=50,
+    title=f"Distribution de la variable : {selected_feature}",
+    labels={selected_feature: "Valeur", "count": "Effectif"}
+)
+
+fig_hist.update_layout(
+    title_x=0.5,
+    template="plotly_white"
+)
+
+st.plotly_chart(fig_hist, use_container_width=True)
+
+# --- Graphique 2 : valeurs manquantes
+missing_rate = (
+    df.isna()
+    .mean()
+    .reset_index()
+    .rename(columns={"index": "Variable", 0: "Taux de valeurs manquantes"})
+    .sort_values("Taux de valeurs manquantes", ascending=False)
+)
+
+fig_missing = px.bar(
+    missing_rate.head(20),
+    x="Variable",
+    y="Taux de valeurs manquantes",
+    title="Top 20 des variables avec le plus de valeurs manquantes",
+    labels={"Taux de valeurs manquantes": "Proportion de valeurs manquantes"}
+)
+
+fig_missing.update_layout(
+    title_x=0.5,
+    xaxis_tickangle=-45,
+    template="plotly_white"
+)
+
+st.plotly_chart(fig_missing, use_container_width=True)
+
+st.markdown(
+    """
+    ℹ️ Les valeurs manquantes sont courantes dans ce type de données
+    et sont **nativement prises en charge par LightGBM**.
+    """
+)
+
+# ======================================================
+# SÉLECTION D’UN INDIVIDU
+# ======================================================
+st.header("3️⃣ Sélection d’un individu pour la prédiction")
 
 n_rows = len(df)
 
-if n_rows == 0:
-    st.error("Le fichier CSV ne contient aucune ligne exploitable.")
-    st.stop()
-
-elif n_rows == 1:
-    st.info("Une seule ligne disponible – sélection automatique.")
+if n_rows == 1:
+    st.info("Un seul individu disponible – sélection automatique.")
     row_id = 0
-
 else:
     row_id = st.slider(
-        "Choisir une ligne du dataset",
+        "Choisir un individu dans le jeu de données",
         min_value=0,
         max_value=n_rows - 1,
         value=0
@@ -111,77 +174,59 @@ else:
 
 input_df = df.iloc[[row_id]]
 
-st.write("Données utilisées pour la prédiction")
 st.dataframe(input_df)
 
 # ======================================================
-# PREPROCESSING LIGHTGBM
+# PRÉDICTION
 # ======================================================
+st.header("4️⃣ Résultat de la prédiction")
+
 def preprocess_for_lgbm(df_row):
     X = df_row.copy()
     X = X.rename(columns=COL_MAP)
     return X
 
-# ======================================================
-# CHOIX DU MODÈLE
-# ======================================================
-st.subheader("⚙️ Choix du modèle")
+X_lgbm = preprocess_for_lgbm(input_df)
 
-model_choice = st.radio(
-    "Sélectionner le modèle",
-    [
-        "Baseline – DummyClassifier",
-        "Nouveau modèle – LightGBM"
-    ]
+prediction = lgbm_model.predict(X_lgbm)[0]
+probability = lgbm_model.predict_proba(X_lgbm)[0][1]
+
+# Explication de la classe prédite
+st.markdown(
+    """
+    **Interprétation de la prédiction :**
+
+    - **Classe 0** : l’événement cible ne se produit pas  
+    - **Classe 1** : l’événement cible se produit  
+
+    La probabilité affichée correspond à la **confiance du modèle**
+    dans l’appartenance à la classe 1.
+    """
 )
 
-# ======================================================
-# PRÉDICTION
-# ======================================================
-if st.button("🔮 Lancer la prédiction"):
+col1, col2 = st.columns(2)
 
-    if model_choice == "Baseline – DummyClassifier":
-        prediction = dummy_model.predict(input_df)[0]
-        score = dummy_model.predict_proba(input_df)[0][1]
+with col1:
+    st.metric("Classe prédite", int(prediction))
 
-    else:
-        X_lgbm = preprocess_for_lgbm(input_df)
-        prediction = lgbm_model.predict(X_lgbm)[0]
-        score = lgbm_model.predict_proba(X_lgbm)[0][1]
-
-    st.success("Prédiction effectuée")
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.metric("Classe prédite", int(prediction))
-
-    with col2:
-        st.metric("Score / Probabilité", round(float(score), 4))
-
-# ======================================================
-# COMPARAISON
-# ======================================================
-st.subheader("📊 Comparaison des modèles")
-
-comparison_df = pd.DataFrame({
-    "Modèle": ["DummyClassifier", "LightGBM"],
-    "Utilise les features": ["❌ Non", "✅ Oui"],
-    "Non-linéarités": ["❌ Non", "✅ Oui"],
-    "Qualité attendue": ["Faible (baseline)", "Supérieure"]
-})
-
-st.table(comparison_df)
+with col2:
+    st.metric("Probabilité associée (classe 1)", round(float(probability), 4))
 
 # ======================================================
 # CONCLUSION
 # ======================================================
-st.subheader("✅ Conclusion")
+st.header("5️⃣ Conclusion")
 
 st.markdown(
     """
-    - Le **DummyClassifier** fournit une baseline naïve mais lisible en démo.
-    - Le **modèle LightGBM** exploite réellement les données.
-    - Cette application constitue une **preuve de concept robuste, stable et démontrable**.
+    ✅ Ce dashboard présente une **preuve de concept complète** :
+
+    - exploration du jeu de données ;
+    - sélection d’un individu ;
+    - prédiction réalisée par un **modèle récent (LightGBM)** ;
+    - visualisations interactives accessibles.
+
+    📌 La comparaison avec une baseline est détaillée
+    dans le notebook et la note méthodologique associée.
     """
 )
