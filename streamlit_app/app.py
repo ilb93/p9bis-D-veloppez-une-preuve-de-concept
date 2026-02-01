@@ -67,49 +67,70 @@ st.dataframe(df.describe().T)
 numeric_cols = df.columns.tolist()
 
 # ======================================================
-# GRAPHIQUE 1 : Histogramme binned (stable)
+# GRAPHIQUE 1 — HISTOGRAMME ROBUSTE
 # ======================================================
-st.markdown("### Distribution d’une variable continue")
+st.markdown("### Distribution robuste d’une variable")
 
-col_hist = st.selectbox(
-    "Choisir une variable continue",
+hist_col = st.selectbox(
+    "Choisir une variable pour l’histogramme",
     numeric_cols,
-    key="hist_var"
+    key="hist_col"
 )
 
-hist_data = df[col_hist].dropna()
+data = df[hist_col].dropna()
 
-counts, bin_edges = np.histogram(hist_data, bins=20)
+# clipping pour éviter graphiques absurdes
+low, high = data.quantile([0.01, 0.99])
+data_clipped = data.clip(lower=low, upper=high)
+
+counts, bins = np.histogram(data_clipped, bins=20)
 
 hist_df = pd.DataFrame({
     "Intervalle": [
-        f"{round(bin_edges[i], 2)} → {round(bin_edges[i+1], 2)}"
-        for i in range(len(bin_edges) - 1)
+        f"{round(bins[i], 2)} → {round(bins[i+1], 2)}"
+        for i in range(len(bins) - 1)
     ],
     "Effectif": counts
 })
 
 st.bar_chart(hist_df.set_index("Intervalle"))
 
+st.caption(
+    "Histogramme construit après exclusion des valeurs extrêmes (1 % – 99 %) "
+    "afin de garantir une lecture visuelle cohérente."
+)
+
 # ======================================================
-# GRAPHIQUE 2 : Profil statistique (quantiles)
+# GRAPHIQUE 2 — PROFIL STATISTIQUE (QUANTILES)
 # ======================================================
 st.markdown("### Profil statistique de la variable (quantiles)")
 
-col_quant = st.selectbox(
+stat_col = st.selectbox(
     "Choisir une variable pour l’analyse statistique",
     numeric_cols,
-    key="quant_var"
+    key="stat_col"
 )
 
-quantiles = df[col_quant].describe()[["min", "25%", "50%", "75%", "max"]]
+s = df[stat_col].dropna()
 
-quant_df = pd.DataFrame({
-    "Statistique": quantiles.index,
-    "Valeur": quantiles.values
-}).set_index("Statistique")
+quantiles = {
+    "min": s.min(),
+    "25%": s.quantile(0.25),
+    "50% (médiane)": s.quantile(0.50),
+    "75%": s.quantile(0.75),
+    "max": s.max()
+}
 
-st.bar_chart(quant_df)
+stat_df = pd.DataFrame.from_dict(
+    quantiles, orient="index", columns=["Valeur"]
+)
+
+st.bar_chart(stat_df)
+
+st.caption(
+    "Ce graphique présente le profil statistique de la variable à partir des quantiles, "
+    "une approche robuste et interprétable même après transformation des données."
+)
 
 # ======================================================
 # SÉLECTION D’UN INDIVIDU
@@ -156,17 +177,15 @@ with col2:
 # ======================================================
 # ACCESSIBILITÉ
 # ======================================================
-st.subheader("♿ Accessibilité et conformité WCAG")
+st.subheader("♿ Accessibilité (WCAG – critères essentiels)")
 
 st.markdown(
     """
-    Les critères essentiels d’accessibilité du **WCAG** ont été pris en compte :
-
-    - Composants Streamlit standards compatibles avec la navigation clavier
-    - Graphiques lisibles sans dépendance exclusive à la couleur
-    - Hiérarchie claire des titres et sections
-    - Informations toujours accompagnées de texte explicatif
-    - Absence d’informations critiques transmises uniquement par des codes visuels
+    Les critères essentiels d’accessibilité ont été pris en compte :
+    - composants standards Streamlit compatibles clavier,
+    - graphiques lisibles sans dépendance exclusive à la couleur,
+    - hiérarchie claire des titres et sections,
+    - informations toujours accompagnées d’un texte explicatif.
     """
 )
 
@@ -177,15 +196,14 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    Ce dashboard présente une **preuve de concept complète et opérationnelle**
-    de scoring de risque de crédit reposant sur un **algorithme récent (LightGBM)**.
+    Ce dashboard présente une **preuve de concept complète et robuste**
+    de scoring de risque de crédit basée sur un **modèle LightGBM**.
 
-    Il combine une **analyse exploratoire interactive**, une **sélection dynamique
-    des données en entrée**, et une **prédiction interprétable orientée métier**,
-    dans un environnement **déployé sur le cloud**.
+    L’analyse exploratoire repose sur des **représentations statistiques cohérentes
+    et interprétables**, adaptées à des données prétraitées, tandis que la prédiction
+    s’appuie sur un pipeline industriel reproductible.
 
-    Cette preuve de concept démontre la maîtrise de l’ensemble de la chaîne
-    data science, depuis l’exploration des données jusqu’à la restitution
-    des résultats à destination d’utilisateurs non techniques.
+    Cette approche démontre la capacité à **concevoir, analyser, déployer et expliquer**
+    un modèle de machine learning dans un contexte professionnel.
     """
 )
