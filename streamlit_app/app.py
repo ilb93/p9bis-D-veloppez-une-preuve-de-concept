@@ -1,6 +1,5 @@
 import streamlit as st
 import pandas as pd
-import numpy as np
 import joblib
 import json
 from pathlib import Path
@@ -27,7 +26,7 @@ st.markdown(
 )
 
 # ======================================================
-# CHARGEMENT DES ARTEFACTS (CORRIGÉ)
+# CHARGEMENT DES ARTEFACTS
 # ======================================================
 @st.cache_resource
 def load_artifacts():
@@ -83,6 +82,11 @@ if extra_cols:
 df = df[RAW_COLS]
 
 # ======================================================
+# CAST NUMÉRIQUE GLOBAL (CRITIQUE)
+# ======================================================
+df = df.apply(pd.to_numeric, errors="coerce")
+
+# ======================================================
 # SÉLECTION D’UNE LIGNE
 # ======================================================
 st.subheader("🎯 Sélection d’un individu")
@@ -100,25 +104,25 @@ st.write("Données utilisées pour la prédiction")
 st.dataframe(input_df)
 
 # ======================================================
-# PREPROCESSING (SIMPLIFIÉ ET SAFE)
+# PREPROCESSING
 # ======================================================
 def preprocess_for_ridge(df_row):
     """
-    Ridge pipeline :
-    - Imputation
-    - Scaling
-    - Ordre des features garanti
+    Pipeline Ridge :
+    - cast numérique
+    - imputation + scaling internes
     """
     X = df_row.copy()
     X = X[ridge_pipeline.feature_names_in_]
+    X = X.apply(pd.to_numeric, errors="coerce")
     return X
 
 
 def preprocess_for_lgbm(df_row):
     """
     LightGBM :
-    - Accepte les NaN
-    - Colonnes renommées
+    - accepte les NaN
+    - colonnes renommées
     """
     X = df_row.copy()
     X = X.rename(columns=COL_MAP)
@@ -185,8 +189,8 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    - Le **modèle LightGBM**, issu d’une veille récente, capture des relations complexes.
-    - Le **RidgeClassifier**, encapsulé dans un pipeline, sert de **baseline robuste et stable en production**.
-    - Cette application constitue une **preuve de concept complète et déployable**.
+    - Le **modèle LightGBM** capture des relations complexes.
+    - Le **RidgeClassifier**, encapsulé dans un pipeline, est **stable et robuste en production**.
+    - Cette application constitue une **preuve de concept fonctionnelle et déployable**.
     """
 )
