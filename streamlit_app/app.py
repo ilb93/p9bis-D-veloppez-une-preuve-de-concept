@@ -18,10 +18,12 @@ st.title("📊 Proof of Concept – Scoring de risque de défaut de remboursemen
 st.markdown(
     """
     Cette application présente une **preuve de concept** basée sur un modèle
-    **LightGBM** permettant d’estimer le **risque de défaut de remboursement d’un crédit**.
+    **LightGBM**, utilisé pour estimer le **risque de défaut de remboursement d’un crédit**.
 
-    🎯 Objectif : illustrer le fonctionnement d’un **modèle récent et performant**
-    à travers une analyse exploratoire et des prédictions individuelles.
+    Le dashboard combine :
+    - une **analyse exploratoire des données** ;
+    - la **sélection d’un individu** ;
+    - l’**estimation du risque de défaut**.
     """
 )
 
@@ -46,7 +48,7 @@ RAW_COLS = metadata["raw_feature_columns"]
 COL_MAP = metadata["column_mapping_raw_to_lgbm"]
 
 # ======================================================
-# IMPORT DU CSV D’INFÉRENCE
+# IMPORT DU CSV
 # ======================================================
 st.subheader("📂 Import du jeu de données (CSV)")
 
@@ -117,19 +119,27 @@ row_id = st.slider(
 )
 
 input_df = df.iloc[[row_id]]
-
 st.dataframe(input_df)
 
 # ======================================================
-# PRÉDICTION (LIGHTGBM)
+# PRÉDICTION LIGHTGBM (SAFE)
 # ======================================================
 st.subheader("📈 Résultat de la prédiction")
 
-X_lgbm = input_df.rename(columns=COL_MAP)
+# Renommage des colonnes
+X_lgbm = input_df.rename(columns=COL_MAP).copy()
 
-prediction = int(lgbm_model.predict(X_lgbm)[0])
+# 🔒 SÉCURISATION ABSOLUE DES DTYPES
+for col in X_lgbm.columns:
+    X_lgbm[col] = pd.to_numeric(X_lgbm[col], errors="coerce")
+
+# Prédiction
 proba = float(lgbm_model.predict_proba(X_lgbm)[0][1])
+prediction = int(proba >= 0.5)
 
+# ======================================================
+# AFFICHAGE MÉTIER
+# ======================================================
 st.markdown("### Interprétation de la prédiction")
 
 st.markdown(
@@ -144,7 +154,7 @@ st.markdown(
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Risque de défaut estimé (classe)", prediction)
+    st.metric("Risque de défaut estimé", prediction)
 
 with col2:
     st.metric("Probabilité de défaut", round(proba, 3))
@@ -156,11 +166,12 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    - Le modèle **LightGBM** permet de capturer des relations complexes dans des données
-      structurées à grande dimension.
-    - Cette application illustre concrètement son utilisation dans un
-      **contexte de scoring de risque de crédit**.
-    - Le seuil de décision présenté ici est arbitraire et pourrait être ajusté
-      selon la politique de risque de l’établissement.
+    Ce dashboard illustre l’utilisation d’un **modèle récent (LightGBM)** pour le
+    **scoring de risque de crédit**.
+
+    - L’analyse exploratoire permet de comprendre la structure et la qualité des données.
+    - La prédiction individuelle illustre concrètement l’apport du modèle.
+    - Le seuil de décision présenté ici est arbitraire et pourrait être ajusté selon
+      la politique de risque d’un établissement financier.
     """
 )
