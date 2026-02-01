@@ -67,7 +67,7 @@ st.dataframe(df.describe().T)
 numeric_cols = df.columns.tolist()
 
 # ======================================================
-# GRAPHIQUE 1 : Distribution (histogramme binned)
+# GRAPHIQUE 1 : Histogramme binned (robuste Altair)
 # ======================================================
 st.markdown("### Distribution d’une variable continue")
 
@@ -78,11 +78,18 @@ col_hist = st.selectbox(
 )
 
 hist_data = df[col_hist].dropna()
-bins = np.histogram_bin_edges(hist_data, bins=20)
 
-st.bar_chart(
-    pd.cut(hist_data, bins=bins).value_counts().sort_index()
-)
+counts, bin_edges = np.histogram(hist_data, bins=20)
+
+hist_df = pd.DataFrame({
+    "Intervalle": [
+        f"{round(bin_edges[i], 2)} → {round(bin_edges[i+1], 2)}"
+        for i in range(len(bin_edges) - 1)
+    ],
+    "Effectif": counts
+})
+
+st.bar_chart(hist_df.set_index("Intervalle"))
 
 # ======================================================
 # GRAPHIQUE 2 : Boxplot (dispersion & outliers)
@@ -147,13 +154,13 @@ st.subheader("♿ Accessibilité et conformité WCAG")
 
 st.markdown(
     """
-    Les principes d’accessibilité essentiels du **WCAG** ont été pris en compte :
+    Les critères essentiels d’accessibilité du **WCAG** ont été pris en compte :
 
     - Utilisation de **composants Streamlit standards**, compatibles avec la navigation clavier
-    - Graphiques **lisibles sans dépendance exclusive à la couleur**
-    - Titres, sections et hiérarchie visuelle clairs
-    - Informations toujours accompagnées de **texte explicatif**
-    - Absence d’informations critiques transmises uniquement par des codes visuels
+    - Graphiques lisibles **sans dépendance exclusive à la couleur**
+    - Hiérarchie claire des titres et sections
+    - Informations systématiquement accompagnées de **texte explicatif**
+    - Absence d’informations critiques véhiculées uniquement par des codes visuels
     """
 )
 
@@ -164,17 +171,15 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    Ce dashboard illustre une **preuve de concept complète et opérationnelle**
+    Ce dashboard présente une **preuve de concept complète et opérationnelle**
     de scoring de risque de crédit basée sur un **algorithme récent (LightGBM)**.
 
-    L’approche combine :
-    - une **analyse exploratoire interactive**,
-    - une **sélection dynamique des données en entrée**,
-    - une **prédiction interprétable** orientée métier,
-    - et un **déploiement cloud** prêt pour un usage industriel.
+    Il combine une **analyse exploratoire interactive**, une **sélection dynamique
+    des données en entrée**, et une **prédiction interprétable orientée métier**,
+    le tout dans un environnement **déployé sur le cloud**.
 
-    Cette preuve de concept démontre la **pertinence du modèle**, la **maîtrise
-    de la chaîne data science de bout en bout**, ainsi que la capacité à produire
-    un outil exploitable par des utilisateurs non techniques.
+    Cette preuve de concept démontre la capacité à concevoir, évaluer et exposer
+    un modèle de machine learning conforme aux **bonnes pratiques industrielles**
+    et aux exigences d’un contexte professionnel.
     """
 )
