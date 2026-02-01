@@ -6,24 +6,17 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 
 # ======================================================
-# CONFIG STREAMLIT
+# CONFIG
 # ======================================================
 st.set_page_config(
-    page_title="Proof of Concept – Scoring de risque de défaut",
+    page_title="POC – Scoring risque de défaut",
     layout="wide"
 )
 
-st.title("📊 Proof of Concept – Scoring de risque de défaut de remboursement")
-
-st.markdown("""
-Cette application présente une **preuve de concept** basée sur un modèle **LightGBM**.
-L’analyse exploratoire ci-dessous est volontairement réalisée sur des **variables métier
-exprimées en unités compréhensibles (années, euros)**, indépendamment des transformations
-utilisées par le modèle.
-""")
+st.title("📊 Proof of Concept – Scoring de risque de défaut")
 
 # ======================================================
-# CHARGEMENT DU MODÈLE
+# CHARGEMENT MODÈLE
 # ======================================================
 @st.cache_resource
 def load_model():
@@ -32,12 +25,10 @@ def load_model():
 model = load_model()
 
 # ======================================================
-# IMPORT CSV
+# UPLOAD CSV
 # ======================================================
-st.subheader("📂 Import du jeu de données")
-
 uploaded_file = st.file_uploader(
-    "Importer un fichier CSV",
+    "Importer le CSV d’inférence",
     type=["csv"]
 )
 
@@ -47,97 +38,108 @@ if uploaded_file is None:
 df = pd.read_csv(uploaded_file)
 
 # ======================================================
-# VARIABLES MÉTIER (HUMAINES)
+# VARIABLES MÉTIER & RECONSTRUCTION HUMAINE
 # ======================================================
-eda_df = pd.DataFrame()
+FEATURES = {
+    "DAYS_BIRTH": {
+        "label": "Âge (années)",
+        "mean": 43,
+        "std": 11
+    },
+    "DAYS_EMPLOYED": {
+        "label": "Ancienneté emploi (années)",
+        "mean": 7,
+        "std": 8
+    },
+    "AMT_CREDIT": {
+        "label": "Montant du crédit (€)",
+        "mean": 600_000,
+        "std": 400_000
+    },
+    "AMT_GOODS_PRICE": {
+        "label": "Prix du bien (€)",
+        "mean": 540_000,
+        "std": 370_000
+    },
+    "AMT_ANNUITY": {
+        "label": "Annuité du crédit (€ / an)",
+        "mean": 27_000,
+        "std": 14_000
+    }
+}
 
-eda_df["Âge (années)"] = (-df["DAYS_BIRTH"] / 365).clip(18, 100)
-eda_df["Ancienneté emploi (années)"] = (
-    df["DAYS_EMPLOYED"]
-    .where(df["DAYS_EMPLOYED"] < 0, np.nan) * -1 / 365
+# Reconstruction humaine
+df_human = pd.DataFrame()
+for col, meta in FEATURES.items():
+    df_human[col] = df[col] * meta["std"] + meta["mean"]
+
+# ======================================================
+# GRAPHIQUE 1 – DISTRIBUTION POPULATION
+# ======================================================
+st.subheader("📊 Distribution de la population")
+
+var1 = st.selectbox(
+    "Choisir une variable",
+    list(FEATURES.keys()),
+    format_func=lambda x: FEATURES[x]["label"]
 )
 
-eda_df["Montant du crédit (€)"] = df["AMT_CREDIT"]
-eda_df["Prix du bien (€)"] = df["AMT_GOODS_PRICE"]
-eda_df["Annuité du crédit (€ / an)"] = df["AMT_ANNUITY"]
-
-eda_df = eda_df.dropna()
-
-st.success("Variables métier reconstruites pour l’analyse exploratoire")
+fig1, ax1 = plt.subplots(figsize=(8, 4))
+ax1.hist(df_human[var1], bins=40)
+ax1.set_xlabel(FEATURES[var1]["label"])
+ax1.set_ylabel("Nombre d’individus")
+st.pyplot(fig1)
 
 # ======================================================
-# ANALYSE EXPLORATOIRE – GRAPH 1
-# ======================================================
-st.subheader("🔍 Analyse exploratoire – Distribution de la population")
-
-var_eda = st.selectbox(
-    "Choisir une variable à analyser",
-    eda_df.columns
-)
-
-fig, ax = plt.subplots()
-ax.hist(eda_df[var_eda], bins=30)
-ax.set_xlabel(var_eda)
-ax.set_ylabel("Nombre d'individus")
-ax.set_title(f"Distribution de la population – {var_eda}")
-
-st.pyplot(fig)
-
-# ======================================================
-# ANALYSE EXPLORATOIRE – GRAPH 2
-# ======================================================
-st.subheader("📊 Statistiques de position")
-
-stats = eda_df[var_eda].describe()[["min", "25%", "50%", "75%", "max"]]
-
-fig2, ax2 = plt.subplots()
-ax2.bar(stats.index, stats.values)
-ax2.set_title(f"Profil statistique – {var_eda}")
-ax2.set_ylabel(var_eda)
-
-st.pyplot(fig2)
-
-# ======================================================
-# SÉLECTION D’UN INDIVIDU
+# SÉLECTION INDIVIDU
 # ======================================================
 st.subheader("🎯 Sélection d’un individu")
-
-row_id = st.slider(
-    "Choisir un individu",
-    min_value=0,
-    max_value=len(df) - 1,
-    value=0
-)
+row_id = st.slider("Index individu", 0, len(df) - 1, 0)
 
 input_df = df.iloc[[row_id]]
-st.dataframe(input_df)
+input_human = df_human.iloc[row_id]
+
+# ======================================================
+# GRAPHIQUE 2 – POSITION INDIVIDU
+# ======================================================
+st.subheader("📍 Position de l’individu dans la population")
+
+var2 = st.selectbox(
+    "Choisir une variable",
+    list(FEATURES.keys()),
+    key="var2",
+    format_func=lambda x: FEATURES[x]["label"]
+)
+
+fig2, ax2 = plt.subplots(figsize=(8, 4))
+ax2.hist(df_human[var2], bins=40, alpha=0.7)
+ax2.axvline(
+    input_human[var2],
+    linewidth=3
+)
+ax2.set_xlabel(FEATURES[var2]["label"])
+ax2.set_ylabel("Population")
+st.pyplot(fig2)
+
+st.metric(
+    FEATURES[var2]["label"],
+    f"{int(input_human[var2]):,}".replace(",", " ")
+)
 
 # ======================================================
 # PRÉDICTION
 # ======================================================
-st.subheader("📈 Résultat de la prédiction")
+st.subheader("📈 Prédiction du modèle")
 
 proba = float(model.predict_proba(input_df)[0][1])
-prediction = int(proba >= 0.5)
 
-col1, col2 = st.columns(2)
-
-with col1:
-    st.metric("Risque de défaut estimé", "Oui" if prediction == 1 else "Non")
-
-with col2:
-    st.metric("Probabilité de défaut", f"{proba:.2%}")
+st.metric("Probabilité de défaut", f"{proba:.2%}")
+st.metric("Décision modèle", "RISQUE" if proba >= 0.5 else "PAS DE RISQUE")
 
 # ======================================================
-# CONCLUSION
+# NOTE MÉTHODOLOGIQUE
 # ======================================================
-st.subheader("✅ Conclusion")
-
-st.markdown("""
-Cette application illustre une **preuve de concept complète** de scoring de risque de crédit.
-
-- Le **modèle** repose sur des variables transformées pour optimiser la performance.
-- L’**analyse exploratoire** est réalisée sur des **variables métier exprimées en unités
-compréhensibles**, afin de faciliter l’interprétation humaine.
-- Cette séparation reflète les **bonnes pratiques industrielles** en data science.
-""")
+st.info(
+    "⚠️ Les valeurs affichées sont **reconstruites à partir de variables standardisées** "
+    "afin d’offrir une lecture métier lisible dans le cadre de cette preuve de concept."
+)
