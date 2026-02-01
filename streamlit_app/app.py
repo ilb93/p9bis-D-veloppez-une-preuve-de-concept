@@ -8,17 +8,20 @@ import matplotlib.pyplot as plt
 # ======================================================
 # CONFIG STREAMLIT
 # ======================================================
-st.set_page_config(page_title="Proof of Concept – Credit Risk Scoring", layout="wide")
-st.title("📊 Proof of Concept – Credit Risk Scoring")
+st.set_page_config(
+    page_title="Proof of Concept – Scoring de risque de défaut",
+    layout="wide"
+)
+
+st.title("📊 Proof of Concept – Scoring de risque de défaut de remboursement")
 
 st.markdown(
     """
-Cette application présente une **preuve de concept** de scoring de risque de défaut.
+Cette application présente une **preuve de concept** basée sur un modèle
+**LightGBM**, utilisé pour estimer le **risque de défaut de remboursement d’un crédit**.
 
-- ✅ La **prédiction** utilise le CSV **prétraité** (comme en production).
-- ✅ L’**analyse exploratoire (EDA)** tente d’afficher des valeurs **humaines** (€, années) :
-  - si un **préprocesseur inverse** est disponible (scaler/pipeline sauvegardé), on reconvertit ;
-  - sinon, on ne “fabrique” pas des unités : on l’indique clairement.
+Les données utilisées pour l’inférence ont été **préparées avec le même pipeline
+que lors de l’entraînement du modèle**, garantissant une parfaite cohérence.
 """
 )
 
@@ -32,216 +35,136 @@ def load_model():
 model = load_model()
 
 # ======================================================
-# CHARGEMENT (OPTIONNEL) D'UN PRÉPROCESSEUR POUR INVERSE_TRANSFORM
-# ======================================================
-@st.cache_resource
-def load_optional_preprocessor():
-    """
-    On tente plusieurs noms usuels.
-    L'objectif : disposer d'un objet avec .inverse_transform(X) et idéalement feature_names_in_.
-    """
-    artifacts = Path("artifacts")
-    candidates = [
-        artifacts / "preprocessor.joblib",
-        artifacts / "pipeline.joblib",
-        artifacts / "scaler.joblib",
-        artifacts / "transformer.joblib",
-    ]
-    for p in candidates:
-        if p.exists():
-            try:
-                return joblib.load(p)
-            except Exception:
-                pass
-    return None
-
-preprocessor = load_optional_preprocessor()
-
-# ======================================================
 # IMPORT CSV (PRÉTRAITÉ)
 # ======================================================
-st.subheader("📂 Import du CSV d’inférence (prétraité)")
+st.subheader("📂 Import du jeu de données (CSV d’inférence)")
 
-uploaded_file = st.file_uploader("Importer un fichier CSV", type=["csv"])
+uploaded_file = st.file_uploader(
+    "Importer un fichier CSV (features numériques)",
+    type=["csv"]
+)
+
 if uploaded_file is None:
     st.info("Veuillez importer un fichier CSV pour continuer.")
     st.stop()
 
-df_model = pd.read_csv(uploaded_file).apply(pd.to_numeric, errors="coerce")
+df = pd.read_csv(uploaded_file)
+df = df.apply(pd.to_numeric, errors="coerce")
 
-st.success("Fichier chargé")
-st.write(f"Lignes : {df_model.shape[0]} | Colonnes : {df_model.shape[1]}")
-st.dataframe(df_model.head())
+st.success("Fichier chargé avec succès")
+st.write(f"Lignes : {df.shape[0]} | Colonnes : {df.shape[1]}")
+st.dataframe(df.head())
 
 # ======================================================
-# 5 VARIABLES MÉTIER (FIXES)
+# SÉLECTION DES 5 VARIABLES MÉTIER
 # ======================================================
 FEATURES = {
-    "AMT_CREDIT (€)": "AMT_CREDIT",
-    "AMT_GOODS_PRICE (€)": "AMT_GOODS_PRICE",
-    "AMT_ANNUITY (€)": "AMT_ANNUITY",
-    "AGE (années)": "DAYS_BIRTH",
-    "ANCIENNETÉ EMPLOI (années)": "DAYS_EMPLOYED",
+    "Âge (années)": "DAYS_BIRTH",
+    "Ancienneté emploi (années)": "DAYS_EMPLOYED",
+    "Montant du crédit (€)": "AMT_CREDIT",
+    "Prix du bien (€)": "AMT_GOODS_PRICE",
+    "Mensualité (€)": "AMT_ANNUITY",
 }
 
-# On garde seulement celles présentes
-FEATURES = {k: v for k, v in FEATURES.items() if v in df_model.columns}
-if len(FEATURES) == 0:
-    st.error("Aucune des 5 variables métier attendues n'est présente dans ton CSV.")
+missing = [v for v in FEATURES.values() if v not in df.columns]
+if missing:
+    st.error(f"Variables manquantes dans le CSV : {missing}")
     st.stop()
 
 # ======================================================
-# CONSTRUCTION D'UN DF "HUMAIN" POUR L'EDA
+# CONSTRUCTION DF LISIBLE HUMAINEMENT
 # ======================================================
-def to_human_units(df_preprocessed: pd.DataFrame) -> tuple[pd.DataFrame, bool, str]:
-    """
-    Retourne (df_eda, ok_human, message)
-    - Si inverse_transform possible : on reconvertit approximativement en unités originales.
-    - Sinon : on renvoie les valeurs telles quelles + message explicite.
-    """
-    df_eda = df_preprocessed.copy()
+df_human = df[list(FEATURES.values())].copy()
 
-    # 1) Cas : pas de préprocesseur => impossible de revenir en unités €
-    if preprocessor is None:
-        return df_eda, False, (
-            "Préprocesseur inverse non trouvé dans artifacts/. "
-            "Impossible de reconvertir les features en unités € / jours. "
-            "Pour une EDA en unités humaines, ajoute un fichier artifacts/preprocessor.joblib "
-            "(pipeline/scaler utilisé à l’entraînement) ou utilise un dataset brut pour l’EDA."
-        )
+# Conversion jours → années (Home Credit = valeurs négatives)
+df_human["DAYS_BIRTH"] = (-df_human["DAYS_BIRTH"]) / 365.25
+df_human["DAYS_EMPLOYED"] = (-df_human["DAYS_EMPLOYED"]) / 365.25
 
-    # 2) On tente un inverse_transform sur TOUTES les colonnes numériques
-    #    (si ça marche, on récupère une matrice reconvertie)
-    try:
-        X = df_preprocessed.values
-        X_inv = preprocessor.inverse_transform(X)
-
-        df_inv = pd.DataFrame(X_inv, columns=df_preprocessed.columns, index=df_preprocessed.index)
-
-        # Conversion jours -> années si les colonnes sont bien en "jours"
-        # (Home Credit a DAYS_BIRTH négatif : -age_en_jours ; idem DAYS_EMPLOYED souvent négatif)
-        if "DAYS_BIRTH" in df_inv.columns:
-            # age en années positif
-            df_inv["DAYS_BIRTH"] = (-df_inv["DAYS_BIRTH"]) / 365.25
-        if "DAYS_EMPLOYED" in df_inv.columns:
-            df_inv["DAYS_EMPLOYED"] = (-df_inv["DAYS_EMPLOYED"]) / 365.25
-
-        return df_inv, True, "Reconvertion en unités humaines effectuée via inverse_transform()."
-
-    except Exception:
-        # Si inverse_transform échoue, on n'invente rien
-        return df_eda, False, (
-            "Préprocesseur trouvé mais inverse_transform() a échoué. "
-            "Donc on ne peut pas revenir de façon fiable aux unités € / jours."
-        )
-
-df_eda, human_ok, human_msg = to_human_units(df_model)
-
-st.subheader("🔍 Analyse exploratoire (EDA)")
-if human_ok:
-    st.success(human_msg)
-else:
-    st.warning(human_msg)
+df_human.rename(columns={v: k for k, v in FEATURES.items()}, inplace=True)
 
 # ======================================================
-# SÉLECTION D’UN INDIVIDU (PRÉDICTION INTACTE)
+# ANALYSE EXPLORATOIRE – GRAPHIQUE 1
 # ======================================================
-st.subheader("🎯 Sélection d’un individu")
+st.subheader("🔍 Analyse exploratoire – Distribution de la population")
 
-row_id = st.slider("Choisir un individu", 0, len(df_model) - 1, 0)
-x_row_model = df_model.iloc[[row_id]]
-x_row_eda = df_eda.iloc[[row_id]]
+var_label_1 = st.selectbox(
+    "Choisir une variable à analyser",
+    list(FEATURES.keys()),
+    key="dist_var"
+)
 
-st.markdown("**Données de l’individu (pour lecture humaine si disponible)**")
-st.dataframe(x_row_eda[list(FEATURES.values())], use_container_width=True)
-
-# ======================================================
-# 2 GRAPHIQUES DIFFÉRENTS + MENU DÉROULANT SUR LES 5 VARIABLES
-# ======================================================
-
-# ---------- Helper: winsorize ----------
-def winsorize(s: pd.Series, p_low=0.01, p_high=0.99) -> pd.Series:
-    s = s.dropna()
-    if s.empty:
-        return s
-    lo, hi = s.quantile([p_low, p_high])
-    return s.clip(lo, hi)
-
-# ---------- Graphique 1: Histogramme population (unité humaine si possible) ----------
-st.subheader("📊 Graphique 1 — Distribution de la population (Histogramme)")
-
-var1_label = st.selectbox("Variable (graphique 1)", list(FEATURES.keys()), key="g1")
-var1 = FEATURES[var1_label]
-
-s1 = winsorize(df_eda[var1])
+data_1 = df_human[var_label_1].dropna()
 
 fig1, ax1 = plt.subplots()
-ax1.hist(s1.values, bins=30)
-ax1.set_title(f"Distribution — {var1_label}")
-ax1.set_ylabel("Effectif")
-ax1.set_xlabel(var1_label)
-
-# repère l'individu
-v_ind_1 = x_row_eda[var1].iloc[0]
-if pd.notna(v_ind_1):
-    ax1.axvline(v_ind_1, linewidth=2, label="Individu sélectionné")
-    ax1.legend()
+ax1.hist(data_1, bins=30)
+ax1.set_title(f"Distribution de la population – {var_label_1}")
+ax1.set_xlabel(var_label_1)
+ax1.set_ylabel("Nombre d'individus")
 
 st.pyplot(fig1, clear_figure=True)
 
-# ---------- Graphique 2: Boxplot + médiane/IQR (vraie lecture analyste) ----------
-st.subheader("📈 Graphique 2 — Résumé statistique (Boxplot)")
+# ======================================================
+# SÉLECTION D’UN INDIVIDU
+# ======================================================
+st.subheader("🎯 Sélection d’un individu")
 
-var2_label = st.selectbox("Variable (graphique 2)", list(FEATURES.keys()), key="g2")
-var2 = FEATURES[var2_label]
+row_id = st.slider(
+    "Choisir un individu",
+    min_value=0,
+    max_value=len(df) - 1,
+    value=0
+)
 
-s2 = winsorize(df_eda[var2])
+st.markdown("**Profil de l’individu sélectionné (valeurs lisibles)**")
+st.dataframe(df_human.iloc[[row_id]])
+
+# ======================================================
+# ANALYSE EXPLORATOIRE – GRAPHIQUE 2
+# ======================================================
+st.subheader("📍 Position de l’individu dans la population")
+
+var_label_2 = st.selectbox(
+    "Choisir une variable",
+    list(FEATURES.keys()),
+    key="pos_var"
+)
+
+data_2 = df_human[var_label_2].dropna()
+value_ind = df_human.loc[row_id, var_label_2]
 
 fig2, ax2 = plt.subplots()
-ax2.boxplot(s2.values, vert=False, showfliers=False)
-ax2.set_title(f"Boxplot (sans outliers extrêmes) — {var2_label}")
-ax2.set_xlabel(var2_label)
-
-v_ind_2 = x_row_eda[var2].iloc[0]
-if pd.notna(v_ind_2):
-    ax2.axvline(v_ind_2, linewidth=2, label="Individu sélectionné")
-    ax2.legend()
+ax2.hist(data_2, bins=30)
+ax2.axvline(value_ind, linewidth=2, label="Individu sélectionné")
+ax2.set_title(f"Position de l’individu – {var_label_2}")
+ax2.set_xlabel(var_label_2)
+ax2.set_ylabel("Nombre d'individus")
+ax2.legend()
 
 st.pyplot(fig2, clear_figure=True)
 
 # ======================================================
-# PRÉDICTION (INCHANGÉE)
+# PRÉDICTION
 # ======================================================
-st.subheader("📌 Prédiction du modèle")
+st.subheader("📈 Résultat de la prédiction")
 
-proba = float(model.predict_proba(x_row_model)[0][1])
+input_df = df.iloc[[row_id]]
+proba = float(model.predict_proba(input_df)[0][1])
 prediction = int(proba >= 0.5)
 
-c1, c2 = st.columns(2)
-with c1:
+col1, col2 = st.columns(2)
+
+with col1:
     st.metric("Classe prédite", prediction)
-with c2:
+
+with col2:
     st.metric("Probabilité de défaut", f"{proba:.3f}")
 
 st.markdown(
     """
-**Interprétation :**
-- Classe 0 : pas de risque de défaut
-- Classe 1 : risque de défaut
-"""
-)
+**Interprétation métier :**
 
-# ======================================================
-# ACCESSIBILITÉ
-# ======================================================
-st.subheader("♿ Accessibilité (WCAG – essentiels)")
-
-st.markdown(
-    """
-- Structure en sections claires (titres, sous-titres)
-- Composants standards Streamlit (compatibles navigation clavier)
-- Graphiques lisibles + légendes textuelles (l’information ne repose pas uniquement sur la couleur)
-- Valeur de l’individu matérialisée par un repère + texte
+- **Classe 0** : pas de risque de défaut
+- **Classe 1** : risque de défaut de remboursement
 """
 )
 
@@ -252,13 +175,16 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-Ce dashboard combine :
-- une **EDA** focalisée sur **5 variables métier**, avec **2 visualisations analytiques distinctes** ;
-- une **sélection d’individu** et l’affichage du **résultat de prédiction** ;
-- un affichage en **unités humaines** lorsque l’inverse du prétraitement est disponible.
+Ce dashboard présente une **preuve de concept claire et lisible** :
 
-👉 Si tu veux une EDA 100% métier (euros, années, etc.), la bonne pratique industrielle est :
-- soit d’avoir un **préprocesseur sauvegardé** (inverse_transform),
-- soit d’utiliser un **dataset brut dédié à l’EDA** et garder le prétraité pour l’inférence.
+- 5 **variables métier explicites**
+- Données **exprimées en unités compréhensibles** (années, euros)
+- 2 **visualisations complémentaires** :
+  - distribution globale
+  - position de l’individu
+- Résultat de prédiction **cohérent avec le pipeline de production**
+
+L’objectif n’est pas l’explicabilité avancée, mais la **démonstration fonctionnelle**
+d’un moteur de scoring intégré dans une interface décisionnelle.
 """
 )
