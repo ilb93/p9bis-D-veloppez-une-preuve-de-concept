@@ -18,11 +18,10 @@ st.markdown(
     """
     Cette application présente une **preuve de concept** comparant :
 
-    - 🔹 **Modèle baseline** : DummyClassifier  
+    - 🔹 **Modèle baseline** : DummyClassifier (stratified)  
     - 🚀 **Modèle récent** : LightGBM  
 
-    🎯 Objectif : démontrer l’intérêt d’un modèle plus avancé
-    par rapport à une baseline naïve.
+    🎯 Objectif : démontrer visuellement l’intérêt d’un modèle avancé.
     """
 )
 
@@ -48,7 +47,7 @@ RAW_COLS = metadata["raw_feature_columns"]
 COL_MAP = metadata["column_mapping_raw_to_lgbm"]
 
 # ======================================================
-# IMPORT DU CSV D’INFÉRENCE
+# IMPORT DU CSV
 # ======================================================
 st.subheader("📂 Import du jeu de données (CSV)")
 
@@ -88,23 +87,27 @@ df = df[RAW_COLS]
 df = df.apply(pd.to_numeric, errors="coerce")
 
 # ======================================================
-# 🔴 GUARD CRITIQUE AVANT SLIDER (CORRECTION ICI)
-# ======================================================
-if df.empty:
-    st.error("Le fichier CSV ne contient aucune ligne exploitable.")
-    st.stop()
-
-# ======================================================
-# SÉLECTION D’UNE LIGNE
+# SÉLECTION D’UNE LIGNE (STREAMLIT SAFE)
 # ======================================================
 st.subheader("🎯 Sélection d’un individu")
 
-row_id = st.slider(
-    "Choisir une ligne du dataset",
-    min_value=0,
-    max_value=len(df) - 1,
-    value=0
-)
+n_rows = len(df)
+
+if n_rows == 0:
+    st.error("Le fichier CSV ne contient aucune ligne exploitable.")
+    st.stop()
+
+elif n_rows == 1:
+    st.info("Une seule ligne disponible – sélection automatique.")
+    row_id = 0
+
+else:
+    row_id = st.slider(
+        "Choisir une ligne du dataset",
+        min_value=0,
+        max_value=n_rows - 1,
+        value=0
+    )
 
 input_df = df.iloc[[row_id]]
 
@@ -157,15 +160,15 @@ if st.button("🔮 Lancer la prédiction"):
         st.metric("Score / Probabilité", round(float(score), 4))
 
 # ======================================================
-# COMPARAISON DES MODÈLES
+# COMPARAISON
 # ======================================================
 st.subheader("📊 Comparaison des modèles")
 
 comparison_df = pd.DataFrame({
-    "Modèle": ["DummyClassifier (baseline)", "LightGBM (récent)"],
-    "Complexité": ["Très faible", "Élevée"],
-    "Relations non-linéaires": ["❌ Non", "✅ Oui"],
-    "Performance attendue": ["Faible (référence)", "Supérieure"]
+    "Modèle": ["DummyClassifier", "LightGBM"],
+    "Utilise les features": ["❌ Non", "✅ Oui"],
+    "Non-linéarités": ["❌ Non", "✅ Oui"],
+    "Qualité attendue": ["Faible (baseline)", "Supérieure"]
 })
 
 st.table(comparison_df)
@@ -177,8 +180,8 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    - Le **DummyClassifier** fournit une baseline naïve mais indispensable.
-    - Le **modèle LightGBM** apporte une amélioration significative.
-    - Cette application constitue une **preuve de concept stable et déployable**.
+    - Le **DummyClassifier** fournit une baseline naïve mais lisible en démo.
+    - Le **modèle LightGBM** exploite réellement les données.
+    - Cette application constitue une **preuve de concept robuste, stable et démontrable**.
     """
 )
