@@ -18,10 +18,11 @@ st.markdown(
     """
     Cette application présente une **preuve de concept** comparant :
 
-    - 🔹 **Modèle baseline** : RidgeClassifier  
+    - 🔹 **Modèle baseline** : DummyClassifier  
     - 🚀 **Modèle récent** : LightGBM  
 
-    🎯 Objectif : démontrer une **amélioration de performance** via un dashboard simple.
+    🎯 Objectif : démontrer l’intérêt d’un modèle plus avancé
+    par rapport à une baseline naïve.
     """
 )
 
@@ -32,16 +33,16 @@ st.markdown(
 def load_artifacts():
     artifacts_path = Path("artifacts")
 
-    ridge_pipeline = joblib.load(artifacts_path / "ridge_pipeline.joblib")
+    dummy_model = joblib.load(artifacts_path / "dummy_classifier.joblib")
     lgbm_model = joblib.load(artifacts_path / "lgbm.joblib")
 
     with open(artifacts_path / "metadata.json", encoding="utf-8") as f:
         metadata = json.load(f)
 
-    return ridge_pipeline, lgbm_model, metadata
+    return dummy_model, lgbm_model, metadata
 
 
-ridge_pipeline, lgbm_model, metadata = load_artifacts()
+dummy_model, lgbm_model, metadata = load_artifacts()
 
 RAW_COLS = metadata["raw_feature_columns"]
 COL_MAP = metadata["column_mapping_raw_to_lgbm"]
@@ -82,7 +83,7 @@ if extra_cols:
 df = df[RAW_COLS]
 
 # ======================================================
-# CAST NUMÉRIQUE GLOBAL (CRITIQUE)
+# CAST NUMÉRIQUE GLOBAL (SAFE)
 # ======================================================
 df = df.apply(pd.to_numeric, errors="coerce")
 
@@ -104,25 +105,13 @@ st.write("Données utilisées pour la prédiction")
 st.dataframe(input_df)
 
 # ======================================================
-# PREPROCESSING
+# PREPROCESSING LIGHTGBM
 # ======================================================
-def preprocess_for_ridge(df_row):
-    """
-    Pipeline Ridge :
-    - cast numérique
-    - imputation + scaling internes
-    """
-    X = df_row.copy()
-    X = X[ridge_pipeline.feature_names_in_]
-    X = X.apply(pd.to_numeric, errors="coerce")
-    return X
-
-
 def preprocess_for_lgbm(df_row):
     """
     LightGBM :
     - accepte les NaN
-    - colonnes renommées
+    - nécessite le renommage des colonnes
     """
     X = df_row.copy()
     X = X.rename(columns=COL_MAP)
@@ -136,7 +125,7 @@ st.subheader("⚙️ Choix du modèle")
 model_choice = st.radio(
     "Sélectionner le modèle",
     [
-        "Baseline – RidgeClassifier",
+        "Baseline – DummyClassifier",
         "Nouveau modèle – LightGBM"
     ]
 )
@@ -146,15 +135,12 @@ model_choice = st.radio(
 # ======================================================
 if st.button("🔮 Lancer la prédiction"):
 
-    if model_choice == "Baseline – RidgeClassifier":
-        X_ridge = preprocess_for_ridge(input_df)
-
-        prediction = ridge_pipeline.predict(X_ridge)[0]
-        score = ridge_pipeline.decision_function(X_ridge)[0]
+    if model_choice == "Baseline – DummyClassifier":
+        prediction = dummy_model.predict(input_df)[0]
+        score = 0.0  # Dummy = baseline sans score probabiliste
 
     else:
         X_lgbm = preprocess_for_lgbm(input_df)
-
         prediction = lgbm_model.predict(X_lgbm)[0]
         score = lgbm_model.predict_proba(X_lgbm)[0][1]
 
@@ -174,10 +160,10 @@ if st.button("🔮 Lancer la prédiction"):
 st.subheader("📊 Comparaison des modèles")
 
 comparison_df = pd.DataFrame({
-    "Modèle": ["RidgeClassifier (baseline)", "LightGBM (récent)"],
-    "Gestion des NaN": ["❌ Non", "✅ Oui"],
+    "Modèle": ["DummyClassifier (baseline)", "LightGBM (récent)"],
+    "Complexité": ["Très faible", "Élevée"],
     "Relations non-linéaires": ["❌ Non", "✅ Oui"],
-    "Performance": ["Référence", "Supérieure"]
+    "Performance attendue": ["Faible (référence)", "Supérieure"]
 })
 
 st.table(comparison_df)
@@ -189,8 +175,8 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    - Le **modèle LightGBM** capture des relations complexes.
-    - Le **RidgeClassifier**, encapsulé dans un pipeline, est **stable et robuste en production**.
-    - Cette application constitue une **preuve de concept fonctionnelle et déployable**.
+    - Le **DummyClassifier** fournit une **baseline naïve**, indispensable pour toute démarche ML rigoureuse.
+    - Le **modèle LightGBM**, issu d’une veille récente, capture des relations complexes et améliore la performance.
+    - Cette application constitue une **preuve de concept robuste, simple et déployable**.
     """
 )
