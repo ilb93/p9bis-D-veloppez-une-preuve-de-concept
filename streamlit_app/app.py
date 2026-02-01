@@ -27,24 +27,22 @@ st.markdown(
 )
 
 # ======================================================
-# CHARGEMENT DES ARTEFACTS
+# CHARGEMENT DES ARTEFACTS (CORRIGÉ)
 # ======================================================
 @st.cache_resource
 def load_artifacts():
     artifacts_path = Path("artifacts")
 
-    std_scale = joblib.load(artifacts_path / "std_scale.joblib")
-    imputer = joblib.load(artifacts_path / "imputer_median.joblib")
-    ridge_model = joblib.load(artifacts_path / "best_ridge.joblib")
+    ridge_pipeline = joblib.load(artifacts_path / "ridge_pipeline.joblib")
     lgbm_model = joblib.load(artifacts_path / "lgbm.joblib")
 
     with open(artifacts_path / "metadata.json", encoding="utf-8") as f:
         metadata = json.load(f)
 
-    return std_scale, imputer, ridge_model, lgbm_model, metadata
+    return ridge_pipeline, lgbm_model, metadata
 
 
-std_scale, imputer, ridge_model, lgbm_model, metadata = load_artifacts()
+ridge_pipeline, lgbm_model, metadata = load_artifacts()
 
 RAW_COLS = metadata["raw_feature_columns"]
 COL_MAP = metadata["column_mapping_raw_to_lgbm"]
@@ -102,25 +100,18 @@ st.write("Données utilisées pour la prédiction")
 st.dataframe(input_df)
 
 # ======================================================
-# PREPROCESSING STRICT (IDENTIQUE AU NOTEBOOK)
+# PREPROCESSING (SIMPLIFIÉ ET SAFE)
 # ======================================================
 def preprocess_for_ridge(df_row):
     """
-    RidgeClassifier :
-    - AUCUN NaN autorisé
-    - Imputation -> Scaling
+    Ridge pipeline :
+    - Imputation
+    - Scaling
+    - Ordre des features garanti
     """
-    X_imputed = pd.DataFrame(
-        imputer.transform(df_row),
-        columns=RAW_COLS
-    )
-
-    X_scaled = pd.DataFrame(
-        std_scale.transform(X_imputed),
-        columns=RAW_COLS
-    )
-
-    return X_scaled
+    X = df_row.copy()
+    X = X[ridge_pipeline.feature_names_in_]
+    return X
 
 
 def preprocess_for_lgbm(df_row):
@@ -132,7 +123,6 @@ def preprocess_for_lgbm(df_row):
     X = df_row.copy()
     X = X.rename(columns=COL_MAP)
     return X
-
 
 # ======================================================
 # CHOIX DU MODÈLE
@@ -155,8 +145,8 @@ if st.button("🔮 Lancer la prédiction"):
     if model_choice == "Baseline – RidgeClassifier":
         X_ridge = preprocess_for_ridge(input_df)
 
-        prediction = ridge_model.predict(X_ridge)[0]
-        score = ridge_model.decision_function(X_ridge)[0]
+        prediction = ridge_pipeline.predict(X_ridge)[0]
+        score = ridge_pipeline.decision_function(X_ridge)[0]
 
     else:
         X_lgbm = preprocess_for_lgbm(input_df)
@@ -196,7 +186,7 @@ st.subheader("✅ Conclusion")
 st.markdown(
     """
     - Le **modèle LightGBM**, issu d’une veille récente, capture des relations complexes.
-    - Le **RidgeClassifier** sert de **baseline robuste et interprétable**.
+    - Le **RidgeClassifier**, encapsulé dans un pipeline, sert de **baseline robuste et stable en production**.
     - Cette application constitue une **preuve de concept complète et déployable**.
     """
 )
