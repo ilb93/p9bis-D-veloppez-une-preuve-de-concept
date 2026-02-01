@@ -29,8 +29,7 @@ st.markdown(
 # ======================================================
 @st.cache_resource
 def load_model():
-    artifacts_path = Path("artifacts")
-    return joblib.load(artifacts_path / "lgbm.joblib")
+    return joblib.load(Path("artifacts") / "lgbm.joblib")
 
 model = load_model()
 
@@ -60,30 +59,45 @@ st.dataframe(df.head())
 # ======================================================
 st.subheader("🔍 Analyse exploratoire des données")
 
-# --- Statistiques descriptives
-st.markdown("### Statistiques descriptives")
+st.markdown("### Statistiques descriptives (variables numériques)")
 st.dataframe(df.describe().T)
 
-numeric_cols = df.columns.tolist()
+# ======================================================
+# SÉLECTION DES VARIABLES PERTINENTES POUR L’EDA
+# ======================================================
+# Règles :
+# - numérique
+# - non binaire
+# - suffisamment variable
+eda_cols = [
+    col for col in df.columns
+    if df[col].nunique(dropna=True) > 10
+    and df[col].std(skipna=True) > 1e-6
+]
+
+st.caption(
+    f"{len(eda_cols)} variables continues pertinentes sélectionnées pour l’analyse exploratoire "
+    "(variables binaires et techniques exclues)."
+)
 
 # ======================================================
 # GRAPHIQUE 1 — HISTOGRAMME ROBUSTE
 # ======================================================
-st.markdown("### Distribution robuste d’une variable")
+st.markdown("### Distribution robuste d’une variable continue")
 
 hist_col = st.selectbox(
-    "Choisir une variable pour l’histogramme",
-    numeric_cols,
+    "Choisir une variable",
+    eda_cols,
     key="hist_col"
 )
 
 data = df[hist_col].dropna()
 
-# clipping pour éviter graphiques absurdes
+# clipping pour lecture cohérente
 low, high = data.quantile([0.01, 0.99])
-data_clipped = data.clip(lower=low, upper=high)
+data = data.clip(lower=low, upper=high)
 
-counts, bins = np.histogram(data_clipped, bins=20)
+counts, bins = np.histogram(data, bins=20)
 
 hist_df = pd.DataFrame({
     "Intervalle": [
@@ -97,7 +111,7 @@ st.bar_chart(hist_df.set_index("Intervalle"))
 
 st.caption(
     "Histogramme construit après exclusion des valeurs extrêmes (1 % – 99 %) "
-    "afin de garantir une lecture visuelle cohérente."
+    "pour garantir une représentation visuelle stable et interprétable."
 )
 
 # ======================================================
@@ -106,19 +120,19 @@ st.caption(
 st.markdown("### Profil statistique de la variable (quantiles)")
 
 stat_col = st.selectbox(
-    "Choisir une variable pour l’analyse statistique",
-    numeric_cols,
+    "Choisir une variable",
+    eda_cols,
     key="stat_col"
 )
 
 s = df[stat_col].dropna()
 
 quantiles = {
-    "min": s.min(),
-    "25%": s.quantile(0.25),
-    "50% (médiane)": s.quantile(0.50),
-    "75%": s.quantile(0.75),
-    "max": s.max()
+    "Minimum": s.min(),
+    "1er quartile (25%)": s.quantile(0.25),
+    "Médiane (50%)": s.quantile(0.50),
+    "3e quartile (75%)": s.quantile(0.75),
+    "Maximum": s.max()
 }
 
 stat_df = pd.DataFrame.from_dict(
@@ -128,8 +142,8 @@ stat_df = pd.DataFrame.from_dict(
 st.bar_chart(stat_df)
 
 st.caption(
-    "Ce graphique présente le profil statistique de la variable à partir des quantiles, "
-    "une approche robuste et interprétable même après transformation des données."
+    "Ce graphique présente les statistiques de position clés de la variable. "
+    "Cette approche reste pertinente même lorsque les données ont été standardisées."
 )
 
 # ======================================================
@@ -185,7 +199,7 @@ st.markdown(
     - composants standards Streamlit compatibles clavier,
     - graphiques lisibles sans dépendance exclusive à la couleur,
     - hiérarchie claire des titres et sections,
-    - informations toujours accompagnées d’un texte explicatif.
+    - informations systématiquement accompagnées de texte explicatif.
     """
 )
 
@@ -196,14 +210,14 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    Ce dashboard présente une **preuve de concept complète et robuste**
+    Ce dashboard présente une **preuve de concept complète et cohérente**
     de scoring de risque de crédit basée sur un **modèle LightGBM**.
 
-    L’analyse exploratoire repose sur des **représentations statistiques cohérentes
-    et interprétables**, adaptées à des données prétraitées, tandis que la prédiction
-    s’appuie sur un pipeline industriel reproductible.
+    L’analyse exploratoire se concentre volontairement sur les **variables continues
+    informatives**, afin de garantir des visualisations interprétables, tandis que
+    l’inférence repose sur un pipeline de données conforme aux **bonnes pratiques industrielles**.
 
-    Cette approche démontre la capacité à **concevoir, analyser, déployer et expliquer**
-    un modèle de machine learning dans un contexte professionnel.
+    Cette approche démontre la capacité à **analyser, modéliser, déployer et expliquer**
+    un système de machine learning dans un contexte professionnel.
     """
 )
