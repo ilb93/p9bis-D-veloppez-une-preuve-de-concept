@@ -19,8 +19,8 @@ st.markdown(
     Cette application présente une **preuve de concept** basée sur un modèle
     **LightGBM**, utilisé pour estimer le **risque de défaut de remboursement d’un crédit**.
 
-    Les données utilisées pour l’inférence ont été **préparées avec le même pipeline
-    que lors de l’entraînement du modèle**, garantissant une parfaite cohérence.
+    👉 Les visualisations présentées ci-dessous sont **volontairement adaptées à une lecture humaine**
+    et **ne montrent pas les valeurs mathématiques internes utilisées par le modèle**.
     """
 )
 
@@ -52,98 +52,78 @@ df = df.apply(pd.to_numeric, errors="coerce")
 
 st.success("Fichier chargé avec succès")
 st.write(f"Lignes : {df.shape[0]} | Colonnes : {df.shape[1]}")
-st.dataframe(df.head())
-
-# ======================================================
-# ANALYSE EXPLORATOIRE
-# ======================================================
-st.subheader("🔍 Analyse exploratoire des données")
-
-st.markdown("### Statistiques descriptives (variables numériques)")
-st.dataframe(df.describe().T)
 
 # ======================================================
 # SÉLECTION DES VARIABLES PERTINENTES POUR L’EDA
 # ======================================================
-# Règles :
-# - numérique
-# - non binaire
-# - suffisamment variable
 eda_cols = [
     col for col in df.columns
-    if df[col].nunique(dropna=True) > 10
+    if df[col].nunique(dropna=True) > 20
     and df[col].std(skipna=True) > 1e-6
 ]
 
-st.caption(
-    f"{len(eda_cols)} variables continues pertinentes sélectionnées pour l’analyse exploratoire "
-    "(variables binaires et techniques exclues)."
+# ======================================================
+# ANALYSE EXPLORATOIRE — VERSION HUMAINE
+# ======================================================
+st.subheader("🔍 Analyse exploratoire (lecture humaine)")
+
+st.markdown(
+    """
+    Les graphiques suivants positionnent les individus **relativement à la population**
+    (faible / moyen / élevé), sans afficher de valeurs mathématiques non interprétables.
+    """
 )
 
 # ======================================================
-# GRAPHIQUE 1 — HISTOGRAMME ROBUSTE
+# GRAPHIQUE 1 — POSITIONNEMENT RELATIF
 # ======================================================
-st.markdown("### Distribution robuste d’une variable continue")
+st.markdown("### Positionnement relatif d’une variable")
 
-hist_col = st.selectbox(
+rel_col = st.selectbox(
     "Choisir une variable",
     eda_cols,
-    key="hist_col"
+    key="rel_col"
 )
 
-data = df[hist_col].dropna()
+s = df[rel_col].dropna()
 
-# clipping pour lecture cohérente
-low, high = data.quantile([0.01, 0.99])
-data = data.clip(lower=low, upper=high)
+bins = [-np.inf, s.quantile(0.2), s.quantile(0.4),
+        s.quantile(0.6), s.quantile(0.8), np.inf]
 
-counts, bins = np.histogram(data, bins=20)
+labels = [
+    "Très faible",
+    "Faible",
+    "Moyen",
+    "Élevé",
+    "Très élevé"
+]
 
-hist_df = pd.DataFrame({
-    "Intervalle": [
-        f"{round(bins[i], 2)} → {round(bins[i+1], 2)}"
-        for i in range(len(bins) - 1)
-    ],
-    "Effectif": counts
+categories = pd.cut(s, bins=bins, labels=labels)
+cat_df = categories.value_counts(normalize=True).reindex(labels).fillna(0) * 100
+
+st.bar_chart(cat_df)
+
+st.caption(
+    "Répartition de la population par niveau relatif. "
+    "Les catégories sont basées sur les quantiles de la population."
+)
+
+# ======================================================
+# GRAPHIQUE 2 — PROFIL SIMPLIFIÉ
+# ======================================================
+st.markdown("### Profil global de la variable")
+
+profile = pd.Series({
+    "En dessous de la moyenne": (s < s.median()).mean() * 100,
+    "Autour de la moyenne": ((s >= s.quantile(0.4)) & (s <= s.quantile(0.6))).mean() * 100,
+    "Au-dessus de la moyenne": (s > s.median()).mean() * 100
 })
 
-st.bar_chart(hist_df.set_index("Intervalle"))
+st.bar_chart(profile)
 
 st.caption(
-    "Histogramme construit après exclusion des valeurs extrêmes (1 % – 99 %) "
-    "pour garantir une représentation visuelle stable et interprétable."
-)
-
-# ======================================================
-# GRAPHIQUE 2 — PROFIL STATISTIQUE (QUANTILES)
-# ======================================================
-st.markdown("### Profil statistique de la variable (quantiles)")
-
-stat_col = st.selectbox(
-    "Choisir une variable",
-    eda_cols,
-    key="stat_col"
-)
-
-s = df[stat_col].dropna()
-
-quantiles = {
-    "Minimum": s.min(),
-    "1er quartile (25%)": s.quantile(0.25),
-    "Médiane (50%)": s.quantile(0.50),
-    "3e quartile (75%)": s.quantile(0.75),
-    "Maximum": s.max()
-}
-
-stat_df = pd.DataFrame.from_dict(
-    quantiles, orient="index", columns=["Valeur"]
-)
-
-st.bar_chart(stat_df)
-
-st.caption(
-    "Ce graphique présente les statistiques de position clés de la variable. "
-    "Cette approche reste pertinente même lorsque les données ont été standardisées."
+    "Ce graphique synthétise la position de la population par rapport à la moyenne, "
+    "sans afficher de valeurs numériques brutes."
 )
 
 # ======================================================
@@ -173,20 +153,20 @@ st.markdown(
     """
     **Interprétation métier :**
 
-    - **Classe 0** : absence de risque de défaut de remboursement
-    - **Classe 1** : risque de défaut de remboursement
+    - **Classe 0** : pas de risque de défaut
+    - **Classe 1** : risque de défaut
 
-    La probabilité correspond à l’estimation du risque de défaut pour la classe 1.
+    La probabilité indique le **niveau de risque estimé**.
     """
 )
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Classe prédite", prediction)
+    st.metric("Décision du modèle", prediction)
 
 with col2:
-    st.metric("Probabilité de défaut", round(proba, 3))
+    st.metric("Probabilité de défaut", f"{proba:.1%}")
 
 # ======================================================
 # ACCESSIBILITÉ
@@ -195,11 +175,10 @@ st.subheader("♿ Accessibilité (WCAG – critères essentiels)")
 
 st.markdown(
     """
-    Les critères essentiels d’accessibilité ont été pris en compte :
-    - composants standards Streamlit compatibles clavier,
-    - graphiques lisibles sans dépendance exclusive à la couleur,
-    - hiérarchie claire des titres et sections,
-    - informations systématiquement accompagnées de texte explicatif.
+    - Graphiques sans dépendance exclusive à la couleur  
+    - Libellés textuels explicites  
+    - Hiérarchie claire des sections  
+    - Aucune information transmise uniquement par des valeurs numériques abstraites
     """
 )
 
@@ -210,14 +189,13 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    Ce dashboard présente une **preuve de concept complète et cohérente**
-    de scoring de risque de crédit basée sur un **modèle LightGBM**.
+    Ce dashboard présente une **preuve de concept orientée décision**, conçue pour être
+    **compréhensible par des utilisateurs non techniques**.
 
-    L’analyse exploratoire se concentre volontairement sur les **variables continues
-    informatives**, afin de garantir des visualisations interprétables, tandis que
-    l’inférence repose sur un pipeline de données conforme aux **bonnes pratiques industrielles**.
+    Les données utilisées par le modèle sont volontairement **traduites en catégories lisibles**
+    pour l’analyse exploratoire, tandis que la prédiction repose sur un pipeline
+    **mathématiquement rigoureux et industriel**.
 
-    Cette approche démontre la capacité à **analyser, modéliser, déployer et expliquer**
-    un système de machine learning dans un contexte professionnel.
+    Cette approche garantit à la fois **performance du modèle** et **clarté métier**.
     """
 )
