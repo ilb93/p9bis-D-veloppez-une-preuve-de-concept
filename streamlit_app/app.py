@@ -22,6 +22,7 @@ st.markdown(
 
     Le dashboard combine :
     - une **analyse exploratoire des données** ;
+    - la **répartition des classes** ;
     - la **sélection d’un individu** ;
     - l’**estimation du risque de défaut**.
     """
@@ -107,6 +108,47 @@ st.info(
 )
 
 # ======================================================
+# RÉPARTITION DES CLASSES (SUR LE DATASET D’INFÉRENCE)
+# ======================================================
+st.subheader("📊 Répartition estimée des classes (dataset chargé)")
+
+st.markdown(
+    """
+    Cette section présente une **estimation de la répartition des classes**
+    obtenue en appliquant le modèle LightGBM sur l’ensemble du jeu de données chargé.
+    Elle permet d’illustrer le **déséquilibre naturel** du problème de défaut de crédit.
+    """
+)
+
+# Préparation des données pour LightGBM
+X_all = df.rename(columns=COL_MAP).copy()
+
+for col in X_all.columns:
+    X_all[col] = pd.to_numeric(X_all[col], errors="coerce")
+
+# Prédictions globales
+probas_all = lgbm_model.predict_proba(X_all)[:, 1]
+preds_all = (probas_all >= 0.5).astype(int)
+
+class_dist = pd.Series(preds_all).value_counts(normalize=True).sort_index() * 100
+class_dist_df = class_dist.rename(index={
+    0: "Classe 0 – Pas de défaut",
+    1: "Classe 1 – Défaut"
+}).round(2)
+
+st.bar_chart(class_dist_df)
+
+st.markdown(
+    """
+    - **Classe 0** : client sans risque de défaut  
+    - **Classe 1** : client présentant un risque de défaut  
+
+    La prédominance de la classe 0 est cohérente avec la **réalité métier** :
+    les défauts de remboursement restent **minoritaires**.
+    """
+)
+
+# ======================================================
 # SÉLECTION D’UN INDIVIDU
 # ======================================================
 st.subheader("🎯 Sélection d’un individu")
@@ -122,24 +164,18 @@ input_df = df.iloc[[row_id]]
 st.dataframe(input_df)
 
 # ======================================================
-# PRÉDICTION LIGHTGBM (SAFE)
+# PRÉDICTION INDIVIDUELLE
 # ======================================================
 st.subheader("📈 Résultat de la prédiction")
 
-# Renommage des colonnes
 X_lgbm = input_df.rename(columns=COL_MAP).copy()
 
-# 🔒 SÉCURISATION ABSOLUE DES DTYPES
 for col in X_lgbm.columns:
     X_lgbm[col] = pd.to_numeric(X_lgbm[col], errors="coerce")
 
-# Prédiction
 proba = float(lgbm_model.predict_proba(X_lgbm)[0][1])
 prediction = int(proba >= 0.5)
 
-# ======================================================
-# AFFICHAGE MÉTIER
-# ======================================================
 st.markdown("### Interprétation de la prédiction")
 
 st.markdown(
@@ -170,8 +206,7 @@ st.markdown(
     **scoring de risque de crédit**.
 
     - L’analyse exploratoire permet de comprendre la structure et la qualité des données.
+    - La répartition des classes met en évidence le **déséquilibre naturel** du problème.
     - La prédiction individuelle illustre concrètement l’apport du modèle.
-    - Le seuil de décision présenté ici est arbitraire et pourrait être ajusté selon
-      la politique de risque d’un établissement financier.
     """
 )
