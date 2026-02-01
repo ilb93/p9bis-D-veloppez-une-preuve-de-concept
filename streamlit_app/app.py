@@ -67,7 +67,7 @@ st.dataframe(df.describe().T)
 numeric_cols = df.columns.tolist()
 
 # ======================================================
-# GRAPHIQUE 1 : Histogramme binned (robuste Altair)
+# GRAPHIQUE 1 : Histogramme binned (stable)
 # ======================================================
 st.markdown("### Distribution d’une variable continue")
 
@@ -92,18 +92,24 @@ hist_df = pd.DataFrame({
 st.bar_chart(hist_df.set_index("Intervalle"))
 
 # ======================================================
-# GRAPHIQUE 2 : Boxplot (dispersion & outliers)
+# GRAPHIQUE 2 : Profil statistique (quantiles)
 # ======================================================
-st.markdown("### Analyse de dispersion (boxplot)")
+st.markdown("### Profil statistique de la variable (quantiles)")
 
-col_box = st.selectbox(
-    "Choisir une variable pour le boxplot",
+col_quant = st.selectbox(
+    "Choisir une variable pour l’analyse statistique",
     numeric_cols,
-    key="box_var"
+    key="quant_var"
 )
 
-box_df = pd.DataFrame({col_box: df[col_box]})
-st.box_chart(box_df)
+quantiles = df[col_quant].describe()[["min", "25%", "50%", "75%", "max"]]
+
+quant_df = pd.DataFrame({
+    "Statistique": quantiles.index,
+    "Valeur": quantiles.values
+}).set_index("Statistique")
+
+st.bar_chart(quant_df)
 
 # ======================================================
 # SÉLECTION D’UN INDIVIDU
@@ -156,11 +162,11 @@ st.markdown(
     """
     Les critères essentiels d’accessibilité du **WCAG** ont été pris en compte :
 
-    - Utilisation de **composants Streamlit standards**, compatibles avec la navigation clavier
-    - Graphiques lisibles **sans dépendance exclusive à la couleur**
+    - Composants Streamlit standards compatibles avec la navigation clavier
+    - Graphiques lisibles sans dépendance exclusive à la couleur
     - Hiérarchie claire des titres et sections
-    - Informations systématiquement accompagnées de **texte explicatif**
-    - Absence d’informations critiques véhiculées uniquement par des codes visuels
+    - Informations toujours accompagnées de texte explicatif
+    - Absence d’informations critiques transmises uniquement par des codes visuels
     """
 )
 
@@ -172,14 +178,14 @@ st.subheader("✅ Conclusion")
 st.markdown(
     """
     Ce dashboard présente une **preuve de concept complète et opérationnelle**
-    de scoring de risque de crédit basée sur un **algorithme récent (LightGBM)**.
+    de scoring de risque de crédit reposant sur un **algorithme récent (LightGBM)**.
 
     Il combine une **analyse exploratoire interactive**, une **sélection dynamique
     des données en entrée**, et une **prédiction interprétable orientée métier**,
-    le tout dans un environnement **déployé sur le cloud**.
+    dans un environnement **déployé sur le cloud**.
 
-    Cette preuve de concept démontre la capacité à concevoir, évaluer et exposer
-    un modèle de machine learning conforme aux **bonnes pratiques industrielles**
-    et aux exigences d’un contexte professionnel.
+    Cette preuve de concept démontre la maîtrise de l’ensemble de la chaîne
+    data science, depuis l’exploration des données jusqu’à la restitution
+    des résultats à destination d’utilisateurs non techniques.
     """
 )
