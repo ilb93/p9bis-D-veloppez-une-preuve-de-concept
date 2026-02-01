@@ -83,9 +83,16 @@ if extra_cols:
 df = df[RAW_COLS]
 
 # ======================================================
-# CAST NUMÉRIQUE GLOBAL (SAFE)
+# CAST NUMÉRIQUE GLOBAL
 # ======================================================
 df = df.apply(pd.to_numeric, errors="coerce")
+
+# ======================================================
+# 🔴 GUARD CRITIQUE AVANT SLIDER (CORRECTION ICI)
+# ======================================================
+if df.empty:
+    st.error("Le fichier CSV ne contient aucune ligne exploitable.")
+    st.stop()
 
 # ======================================================
 # SÉLECTION D’UNE LIGNE
@@ -108,11 +115,6 @@ st.dataframe(input_df)
 # PREPROCESSING LIGHTGBM
 # ======================================================
 def preprocess_for_lgbm(df_row):
-    """
-    LightGBM :
-    - accepte les NaN
-    - nécessite le renommage des colonnes
-    """
     X = df_row.copy()
     X = X.rename(columns=COL_MAP)
     return X
@@ -137,7 +139,7 @@ if st.button("🔮 Lancer la prédiction"):
 
     if model_choice == "Baseline – DummyClassifier":
         prediction = dummy_model.predict(input_df)[0]
-        score = 0.0  # Dummy = baseline sans score probabiliste
+        score = dummy_model.predict_proba(input_df)[0][1]
 
     else:
         X_lgbm = preprocess_for_lgbm(input_df)
@@ -175,8 +177,8 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    - Le **DummyClassifier** fournit une **baseline naïve**, indispensable pour toute démarche ML rigoureuse.
-    - Le **modèle LightGBM**, issu d’une veille récente, capture des relations complexes et améliore la performance.
-    - Cette application constitue une **preuve de concept robuste, simple et déployable**.
+    - Le **DummyClassifier** fournit une baseline naïve mais indispensable.
+    - Le **modèle LightGBM** apporte une amélioration significative.
+    - Cette application constitue une **preuve de concept stable et déployable**.
     """
 )
