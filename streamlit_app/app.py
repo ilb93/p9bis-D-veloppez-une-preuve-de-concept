@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import json
 from pathlib import Path
 
 # ======================================================
@@ -19,30 +20,39 @@ st.markdown(
     Cette application présente une **preuve de concept** basée sur un modèle
     **LightGBM**, utilisé pour estimer le **risque de défaut de remboursement d’un crédit**.
 
-    Les données utilisées pour l’inférence ont été **préparées avec le même pipeline
-    que lors de l’entraînement du modèle**, garantissant une parfaite cohérence.
+    Le dashboard combine :
+    - une **analyse exploratoire des données préparées** ;
+    - la **sélection d’un individu** ;
+    - l’**estimation du risque de défaut**.
     """
 )
 
 # ======================================================
-# CHARGEMENT DU MODÈLE
+# CHARGEMENT DES ARTEFACTS
 # ======================================================
 @st.cache_resource
-def load_model():
+def load_artifacts():
     artifacts_path = Path("artifacts")
     model = joblib.load(artifacts_path / "lgbm.joblib")
-    return model
+
+    with open(artifacts_path / "metadata.json", encoding="utf-8") as f:
+        metadata = json.load(f)
+
+    return model, metadata
 
 
-model = load_model()
+model, metadata = load_artifacts()
+
+RAW_COLS = metadata["raw_feature_columns"]
+COL_MAP = metadata["column_mapping_raw_to_lgbm"]
 
 # ======================================================
-# IMPORT CSV (DÉJÀ PRÉPROCESSÉ)
+# IMPORT CSV
 # ======================================================
 st.subheader("📂 Import du jeu de données (CSV)")
 
 uploaded_file = st.file_uploader(
-    "Importer un fichier CSV d’inférence (features prétraitées)",
+    "Importer un fichier CSV (données d’inférence préparées)",
     type=["csv"]
 )
 
@@ -52,38 +62,52 @@ if uploaded_file is None:
 
 df = pd.read_csv(uploaded_file)
 
-# Sécurisation des types (LightGBM only numeric)
-df = df.apply(pd.to_numeric, errors="coerce")
-
 st.success("Fichier chargé avec succès")
 st.write(f"Lignes : {df.shape[0]} | Colonnes : {df.shape[1]}")
 st.dataframe(df.head())
 
 # ======================================================
-# ANALYSE EXPLORATOIRE
+# CONTRÔLE COLONNES
+# ======================================================
+missing_cols = set(RAW_COLS) - set(df.columns)
+extra_cols = set(df.columns) - set(RAW_COLS)
+
+if missing_cols:
+    st.error(
+        "Le fichier importé ne correspond pas aux features attendues par le modèle.\n\n"
+        f"Colonnes manquantes : {missing_cols}"
+    )
+    st.stop()
+
+if extra_cols:
+    st.warning(f"Colonnes ignorées : {extra_cols}")
+
+df = df[RAW_COLS]
+
+# ======================================================
+# ANALYSE EXPLORATOIRE DES DONNÉES
 # ======================================================
 st.subheader("🔍 Analyse exploratoire des données")
+
+st.markdown(
+    """
+    Les données analysées ici correspondent aux **features finales utilisées par le modèle**
+    après préparation (encodage, nettoyage, transformations).
+    """
+)
 
 st.markdown("### Statistiques descriptives")
 st.dataframe(df.describe().T)
 
-numeric_cols = df.columns.tolist()
+numeric_cols = df.select_dtypes(include=np.number).columns.tolist()
 
-st.markdown("### Distribution d’une variable numérique")
+st.markdown("### Distribution d’une variable")
 selected_col = st.selectbox(
-    "Choisir une variable",
+    "Choisir une variable numérique",
     numeric_cols
 )
+
 st.bar_chart(df[selected_col].value_counts().sort_index())
-
-st.markdown("### Variables avec le plus de valeurs manquantes")
-missing_ratio = df.isna().mean().sort_values(ascending=False).head(20)
-st.bar_chart(missing_ratio)
-
-st.info(
-    "Les valeurs manquantes sont courantes dans ce type de données "
-    "et sont **nativement prises en charge par LightGBM**."
-)
 
 # ======================================================
 # SÉLECTION D’UN INDIVIDU
@@ -105,24 +129,30 @@ st.dataframe(input_df)
 # ======================================================
 st.subheader("📈 Résultat de la prédiction")
 
-proba = float(model.predict_proba(input_df)[0][1])
+X_lgbm = input_df.rename(columns=COL_MAP).copy()
+
+# Sécurisation des types
+for col in X_lgbm.columns:
+    X_lgbm[col] = pd.to_numeric(X_lgbm[col], errors="coerce")
+
+proba = float(model.predict_proba(X_lgbm)[0][1])
 prediction = int(proba >= 0.5)
 
 st.markdown(
     """
     **Interprétation métier :**
 
-    - **Classe 0** : le client ne présente **pas de risque de défaut de remboursement**
-    - **Classe 1** : le client présente un **risque de défaut de remboursement**
+    - **Classe 0** : le client ne présente **pas de risque de défaut**
+    - **Classe 1** : le client présente un **risque de défaut**
 
-    La probabilité correspond à **l’estimation du risque de défaut** pour la classe 1.
+    La probabilité correspond à **l’estimation du risque de défaut**.
     """
 )
 
 col1, col2 = st.columns(2)
 
 with col1:
-    st.metric("Risque de défaut estimé", prediction)
+    st.metric("Classe prédite", prediction)
 
 with col2:
     st.metric("Probabilité de défaut", round(proba, 3))
@@ -134,11 +164,13 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-    Ce dashboard illustre l’utilisation d’un **modèle de machine learning récent
-    (LightGBM)** pour le **scoring de risque de crédit**.
+    Ce dashboard illustre l’utilisation d’un **modèle récent (LightGBM)** pour le
+    **scoring de risque de crédit**, appliqué à des données préparées et cohérentes
+    avec le pipeline d’entraînement.
 
-    Dans cette preuve de concept, les données d’inférence sont volontairement
-    fournies **après le même pipeline de préparation que celui utilisé à l’entraînement**,
-    ce qui correspond aux **bonnes pratiques industrielles**.
+    Il met en évidence :
+    - la compréhension métier du problème ;
+    - l’exploitation de données réelles ;
+    - la capacité à produire des prédictions interprétables.
     """
 )
