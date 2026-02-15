@@ -2,6 +2,7 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
+import shap
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
@@ -21,7 +22,8 @@ st.markdown(
 Cette application présente une **preuve de concept** de scoring de risque basée sur un modèle **LightGBM**.
 
 - Les **graphiques** affichent des **valeurs métier lisibles (années / euros)**  
-- La **prédiction** utilise **les features exactement attendues par le modèle**
+- La **prédiction** utilise **exactement les variables attendues par le modèle**
+- Les décisions du modèle sont **expliquées de manière transparente**
 """
 )
 
@@ -34,6 +36,12 @@ def load_model():
 
 model = load_model()
 
+@st.cache_resource
+def load_shap_explainer(m):
+    return shap.TreeExplainer(m)
+
+explainer = load_shap_explainer(model)
+
 def get_expected_features(m):
     if hasattr(m, "booster_") and m.booster_ is not None:
         return list(m.booster_.feature_name())
@@ -44,7 +52,7 @@ def get_expected_features(m):
 EXPECTED_FEATURES = get_expected_features(model)
 
 # ======================================================
-# UPLOAD CSV UNIQUE
+# UPLOAD CSV
 # ======================================================
 st.subheader("📂 Import du fichier CSV")
 
@@ -89,7 +97,7 @@ def clean_money(s):
     return s.where(s >= 0, np.nan)
 
 # ======================================================
-# VARIABLES HUMAINES
+# VARIABLES MÉTIER
 # ======================================================
 human_df = pd.DataFrame({
     "Âge (années)": clean_age_years(df["age_years"]),
@@ -135,13 +143,13 @@ st.subheader("🎯 Sélection d’un individu")
 row_id = st.slider("Choisir un individu", 0, len(df) - 1, 0)
 
 # ======================================================
-# GRAPHIQUE POSITION INDIVIDU (TAILLE RÉDUITE DE MOITIÉ)
+# POSITION INDIVIDU
 # ======================================================
 st.markdown("### 📍 Position de l’individu dans la population")
 
 val = human_df.loc[row_id, var_label]
 
-fig2, ax2 = plt.subplots(figsize=(9, 2))  # ⬅️ taille divisée par 2
+fig2, ax2 = plt.subplots(figsize=(9, 2))
 ax2.hist(series, bins=30, edgecolor="black", alpha=0.7)
 ax2.axvline(val, color="red", linewidth=2)
 ax2.set_xlabel(var_label)
@@ -167,6 +175,53 @@ def build_model_row(data, idx, expected):
 
 X_row = build_model_row(df, row_id, EXPECTED_FEATURES)
 
+# ======================================================
+# INTERPRÉTABILITÉ LOCALE (SHAP)
+# ======================================================
+st.subheader("🔍 Interprétabilité du modèle – facteurs explicatifs")
+
+shap_values = explainer.shap_values(X_row)
+shap_vals = shap_values[1][0]
+
+shap_df = pd.DataFrame({
+    "Variable": X_row.columns,
+    "Valeur": X_row.iloc[0].values,
+    "Contribution au risque": shap_vals
+})
+
+shap_df["Impact absolu"] = shap_df["Contribution au risque"].abs()
+shap_df = shap_df.sort_values("Impact absolu", ascending=False).head(10)
+
+st.markdown(
+    """
+Les variables ci-dessous sont celles qui ont **le plus influencé la décision du modèle** pour cet individu :
+
+- **Contribution positive** → augmente le risque de défaut  
+- **Contribution négative** → réduit le risque de défaut
+"""
+)
+
+st.dataframe(
+    shap_df[["Variable", "Valeur", "Contribution au risque"]],
+    use_container_width=True
+)
+
+fig_shap, ax = plt.subplots(figsize=(8, 4))
+colors = shap_df["Contribution au risque"].apply(lambda x: "red" if x > 0 else "green")
+
+ax.barh(
+    shap_df["Variable"],
+    shap_df["Contribution au risque"],
+    color=colors
+)
+ax.set_title("Impact des variables sur la prédiction individuelle")
+ax.invert_yaxis()
+
+st.pyplot(fig_shap)
+
+# ======================================================
+# RÉSULTAT FINAL
+# ======================================================
 proba = float(model.predict_proba(X_row)[0][1])
 
 if proba < 0.3:
@@ -183,7 +238,7 @@ c1.metric("Évaluation du profil", verdict)
 c2.metric("Probabilité de défaut", f"{proba:.2%}")
 
 # ======================================================
-# CONCLUSION (RÉÉCRITE)
+# CONCLUSION
 # ======================================================
 st.subheader("✅ Conclusion")
 
@@ -191,27 +246,10 @@ st.markdown(
     """
 Cette preuve de concept démontre une **approche professionnelle du scoring de risque de crédit**, articulée autour de :
 
-- une **analyse exploratoire métier**, fondée sur des variables directement interprétables,
-- une **évaluation individuelle**, positionnée par rapport à la population globale,
-- une **prédiction algorithmique robuste**, reposant sur l’ensemble des variables du modèle LightGBM.
+- une **analyse exploratoire métier** fondée sur des variables interprétables,
+- une **évaluation individuelle contextualisée** par rapport à la population,
+- une **prédiction explicable**, reposant sur un modèle LightGBM et des méthodes d’interprétabilité reconnues.
 
-L’interface a été conçue pour **transformer des résultats statistiques complexes en information décisionnelle compréhensible**, à destination de profils non techniques.
-
-### ♿ Accessibilité & inclusion
-
-La réalisation des graphiques prend en compte les **besoins des personnes en situation de handicap**, en couvrant des critères essentiels des **recommandations WCAG**, notamment :
-- lisibilité des axes et contrastes suffisants,
-- limitation de la surcharge visuelle,
-- hiérarchisation claire de l’information,
-- réduction de la charge cognitive.
-
-Ces choix garantissent une **accessibilité équitable à l’information**, indépendamment des capacités visuelles ou cognitives.
-
-### 🎯 Cadre projet
-
-Cette application s’inscrit dans le cadre d’un **projet de preuve de concept en data science**, visant à démontrer la capacité à :
-- répondre à un besoin métier réel,
-- respecter les contraintes techniques d’un modèle industriel,
-- intégrer des considérations d’accessibilité et de responsabilité numérique.
+L’objectif de cette interface est de **rendre compréhensible une décision algorithmique complexe**, afin de faciliter son appropriation par des utilisateurs non techniques.
 """
 )
