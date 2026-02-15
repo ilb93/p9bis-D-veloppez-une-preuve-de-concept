@@ -2,7 +2,6 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import joblib
-import shap
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
@@ -23,7 +22,7 @@ Cette application présente une **preuve de concept** de scoring de risque basé
 
 - Les **graphiques** affichent des **valeurs métier lisibles (années / euros)**  
 - La **prédiction** utilise **exactement les variables attendues par le modèle**
-- Les décisions du modèle sont **expliquées de manière transparente**
+- La **décision est expliquée** à l’aide des contributions locales natives du modèle
 """
 )
 
@@ -35,12 +34,6 @@ def load_model():
     return joblib.load(Path("artifacts") / "lgbm.joblib")
 
 model = load_model()
-
-@st.cache_resource
-def load_shap_explainer(m):
-    return shap.TreeExplainer(m)
-
-explainer = load_shap_explainer(model)
 
 def get_expected_features(m):
     if hasattr(m, "booster_") and m.booster_ is not None:
@@ -57,7 +50,7 @@ EXPECTED_FEATURES = get_expected_features(model)
 st.subheader("📂 Import du fichier CSV")
 
 uploaded_file = st.file_uploader(
-    "Importer le fichier CSV unifié (ex: sample_unified.csv)",
+    "Importer le fichier CSV unifié (ex : sample_unified.csv)",
     type=["csv"]
 )
 
@@ -74,7 +67,7 @@ st.markdown("### 📈 Statistiques descriptives")
 st.dataframe(df.describe().T, use_container_width=True)
 
 # ======================================================
-# OUTILS
+# OUTILS DE FORMATAGE
 # ======================================================
 def euro_fmt(x, pos=None):
     try:
@@ -97,7 +90,7 @@ def clean_money(s):
     return s.where(s >= 0, np.nan)
 
 # ======================================================
-# VARIABLES MÉTIER
+# VARIABLES MÉTIER LISIBLES
 # ======================================================
 human_df = pd.DataFrame({
     "Âge (années)": clean_age_years(df["age_years"]),
@@ -143,7 +136,7 @@ st.subheader("🎯 Sélection d’un individu")
 row_id = st.slider("Choisir un individu", 0, len(df) - 1, 0)
 
 # ======================================================
-# POSITION INDIVIDU
+# POSITION DE L’INDIVIDU
 # ======================================================
 st.markdown("### 📍 Position de l’individu dans la population")
 
@@ -161,7 +154,7 @@ if "€" in var_label:
 st.pyplot(fig2)
 
 # ======================================================
-# PRÉDICTION
+# PRÉPARATION DONNÉES MODÈLE
 # ======================================================
 def build_model_row(data, idx, expected):
     row = {}
@@ -176,25 +169,24 @@ def build_model_row(data, idx, expected):
 X_row = build_model_row(df, row_id, EXPECTED_FEATURES)
 
 # ======================================================
-# INTERPRÉTABILITÉ LOCALE (SHAP)
+# INTERPRÉTABILITÉ LOCALE (LightGBM natif)
 # ======================================================
 st.subheader("🔍 Interprétabilité du modèle – facteurs explicatifs")
 
-shap_values = explainer.shap_values(X_row)
-shap_vals = shap_values[1][0]
+contribs = model.predict(X_row, pred_contrib=True)[0]
 
-shap_df = pd.DataFrame({
-    "Variable": X_row.columns,
-    "Valeur": X_row.iloc[0].values,
-    "Contribution au risque": shap_vals
+contrib_df = pd.DataFrame({
+    "Variable": EXPECTED_FEATURES + ["Biais"],
+    "Contribution au risque": contribs
 })
 
-shap_df["Impact absolu"] = shap_df["Contribution au risque"].abs()
-shap_df = shap_df.sort_values("Impact absolu", ascending=False).head(10)
+contrib_df = contrib_df[contrib_df["Variable"] != "Biais"]
+contrib_df["Impact absolu"] = contrib_df["Contribution au risque"].abs()
+contrib_df = contrib_df.sort_values("Impact absolu", ascending=False).head(10)
 
 st.markdown(
     """
-Les variables ci-dessous sont celles qui ont **le plus influencé la décision du modèle** pour cet individu :
+Les variables ci-dessous sont celles qui ont **le plus influencé la décision du modèle** :
 
 - **Contribution positive** → augmente le risque de défaut  
 - **Contribution négative** → réduit le risque de défaut
@@ -202,22 +194,22 @@ Les variables ci-dessous sont celles qui ont **le plus influencé la décision d
 )
 
 st.dataframe(
-    shap_df[["Variable", "Valeur", "Contribution au risque"]],
+    contrib_df[["Variable", "Contribution au risque"]],
     use_container_width=True
 )
 
-fig_shap, ax = plt.subplots(figsize=(8, 4))
-colors = shap_df["Contribution au risque"].apply(lambda x: "red" if x > 0 else "green")
+fig_imp, ax = plt.subplots(figsize=(8, 4))
+colors = contrib_df["Contribution au risque"].apply(lambda x: "red" if x > 0 else "green")
 
 ax.barh(
-    shap_df["Variable"],
-    shap_df["Contribution au risque"],
+    contrib_df["Variable"],
+    contrib_df["Contribution au risque"],
     color=colors
 )
 ax.set_title("Impact des variables sur la prédiction individuelle")
 ax.invert_yaxis()
 
-st.pyplot(fig_shap)
+st.pyplot(fig_imp)
 
 # ======================================================
 # RÉSULTAT FINAL
@@ -244,12 +236,12 @@ st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-Cette preuve de concept démontre une **approche professionnelle du scoring de risque de crédit**, articulée autour de :
+Cette preuve de concept démontre une **approche professionnelle du scoring de risque de crédit**, combinant :
 
 - une **analyse exploratoire métier** fondée sur des variables interprétables,
 - une **évaluation individuelle contextualisée** par rapport à la population,
-- une **prédiction explicable**, reposant sur un modèle LightGBM et des méthodes d’interprétabilité reconnues.
+- une **prédiction explicable**, reposant sur un modèle LightGBM et ses contributions locales natives.
 
-L’objectif de cette interface est de **rendre compréhensible une décision algorithmique complexe**, afin de faciliter son appropriation par des utilisateurs non techniques.
+L’objectif est de **rendre compréhensible une décision algorithmique complexe**, afin de faciliter son appropriation par des utilisateurs non techniques, tout en respectant les contraintes d’un déploiement industriel.
 """
 )
