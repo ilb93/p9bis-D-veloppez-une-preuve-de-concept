@@ -4,6 +4,7 @@ import numpy as np
 import pickle
 import torch
 import boto3
+import requests
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
@@ -75,18 +76,6 @@ def load_saint_model_from_s3():
         cache_dir = Path(".saint_cache")
         cache_dir.mkdir(exist_ok=True)
         
-        # Initialiser le client S3
-        if AWS_ACCESS_KEY_ID and AWS_SECRET_ACCESS_KEY:
-            s3_client = boto3.client(
-                's3',
-                aws_access_key_id=AWS_ACCESS_KEY_ID,
-                aws_secret_access_key=AWS_SECRET_ACCESS_KEY,
-                region_name=S3_REGION
-            )
-        else:
-            # Utiliser les credentials par défaut (IAM role, etc.)
-            s3_client = boto3.client('s3', region_name=S3_REGION)
-        
         # Fichiers à télécharger
         files = {
             "weights": "saint_weights.pth",
@@ -97,17 +86,30 @@ def load_saint_model_from_s3():
         
         file_paths = {}
         
-        # Télécharger les fichiers depuis S3
+        # URLs publiques S3 (le bucket est public, pas besoin de credentials)
+        base_url = f"https://{S3_BUCKET}.s3.{S3_REGION}.amazonaws.com"
+        
+        # Télécharger les fichiers depuis S3 via URLs publiques
         for key, filename in files.items():
             local_path = cache_dir / filename
             
             # Télécharger depuis S3 si nécessaire
             if not local_path.exists():
                 try:
-                    s3_client.download_file(S3_BUCKET, filename, str(local_path))
+                    # Utiliser l'URL publique S3
+                    url = f"{base_url}/{filename}"
+                    response = requests.get(url, stream=True)
+                    response.raise_for_status()
+                    
+                    # Sauvegarder le fichier
+                    with open(local_path, 'wb') as f:
+                        for chunk in response.iter_content(chunk_size=8192):
+                            f.write(chunk)
+                    
                     st.success(f"✅ {filename} téléchargé depuis S3")
                 except Exception as e:
                     st.error(f"❌ Erreur lors du téléchargement de {filename}: {str(e)}")
+                    st.info(f"💡 URL tentée: {base_url}/{filename}")
                     raise
             
             file_paths[key] = local_path
@@ -125,7 +127,8 @@ def load_saint_model_from_s3():
     
     except Exception as e:
         st.error(f"❌ Erreur lors du chargement du modèle depuis S3: {str(e)}")
-        st.info("💡 Assurez-vous que les credentials AWS sont configurés correctement.")
+        st.info("💡 Le bucket S3 est public, donc pas besoin de credentials AWS.")
+        st.info("💡 Vérifiez que le bucket 'projetmodelsaint' est accessible publiquement.")
         st.stop()
 
 # Charger le modèle
