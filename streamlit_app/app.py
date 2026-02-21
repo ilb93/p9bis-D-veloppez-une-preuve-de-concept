@@ -1,163 +1,144 @@
 import streamlit as st
+import torch
 import pandas as pd
 import numpy as np
-import torch
-import pickle
 import requests
+import pickle
 import tempfile
 import os
 
-# ==========================================================
-# CONFIG STREAMLIT
-# ==========================================================
-st.set_page_config(
-    page_title="Proof of Concept – Scoring SAINT",
-    layout="wide"
-)
+st.set_page_config(page_title="SAINT Scoring", layout="wide")
 
-st.title("📊 Proof of Concept – Scoring de risque (SAINT Transformer)")
+st.title("📊 Proof of Concept – SAINT Transformer")
 
 st.markdown("""
-Cette application présente une **preuve de concept** basée sur un modèle **SAINT (Transformer tabulaire)**.
-
-• Modèle chargé dynamiquement depuis AWS S3 (lecture publique)  
-• Deep Learning pour données tabulaires  
-• Seuil optimisé via F1-score  
+• Modèle chargé depuis AWS S3  
+• Deep Learning tabulaire  
+• Seuil optimisé F1-score  
 """)
 
 # ==========================================================
-# URLS S3 PUBLIQUES
+# URLS S3 (ADAPTE SI BESOIN)
 # ==========================================================
-MODEL_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_full_model.pth"
-THRESHOLD_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_threshold.pkl"
-META_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_metadata.pkl"
+
+BASE_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com"
+
+MODEL_URL = f"{BASE_URL}/saint_full_model.pth"
+META_URL = f"{BASE_URL}/saint_metadata.pkl"
+THRESHOLD_URL = f"{BASE_URL}/saint_threshold.pkl"
 
 # ==========================================================
-# CHARGEMENT DU MODELE
+# LOAD MODEL
 # ==========================================================
+
 @st.cache_resource
-def load_model():
+def load_everything():
 
-    temp_dir = tempfile.mkdtemp()
+    tmp = tempfile.mkdtemp()
 
-    model_path = os.path.join(temp_dir, "model.pth")
-    threshold_path = os.path.join(temp_dir, "threshold.pkl")
-    meta_path = os.path.join(temp_dir, "metadata.pkl")
+    model_path = os.path.join(tmp, "model.pth")
+    meta_path = os.path.join(tmp, "meta.pkl")
+    threshold_path = os.path.join(tmp, "threshold.pkl")
 
     # téléchargement modèle
-    r = requests.get(MODEL_URL)
-    if r.status_code != 200:
-        st.error("Impossible de télécharger le modèle depuis S3.")
-        st.stop()
     with open(model_path, "wb") as f:
-        f.write(r.content)
+        f.write(requests.get(MODEL_URL).content)
 
-    # téléchargement threshold
-    r = requests.get(THRESHOLD_URL)
-    if r.status_code != 200:
-        st.error("Impossible de télécharger le threshold depuis S3.")
-        st.stop()
-    with open(threshold_path, "wb") as f:
-        f.write(r.content)
-
-    # téléchargement metadata
-    r = requests.get(META_URL)
-    if r.status_code != 200:
-        st.error("Impossible de télécharger les metadata depuis S3.")
-        st.stop()
     with open(meta_path, "wb") as f:
-        f.write(r.content)
+        f.write(requests.get(META_URL).content)
 
-    model = torch.load(model_path, map_location="cpu")
+    with open(threshold_path, "wb") as f:
+        f.write(requests.get(THRESHOLD_URL).content)
+
+    # ⚠️ chargement robuste
+    model = torch.load(
+        model_path,
+        map_location="cpu",
+        weights_only=False
+    )
+
     model.eval()
-
-    with open(threshold_path, "rb") as f:
-        threshold = pickle.load(f)
 
     with open(meta_path, "rb") as f:
         metadata = pickle.load(f)
 
-    return model, threshold, metadata
+    with open(threshold_path, "rb") as f:
+        threshold = pickle.load(f)
+
+    return model, metadata, threshold
 
 
-model, threshold, metadata = load_model()
-
-# ==========================================================
-# UPLOAD CSV
-# ==========================================================
-st.subheader("📂 Import du fichier CSV")
-
-uploaded_file = st.file_uploader("Importer un fichier CSV", type=["csv"])
-
-if uploaded_file is None:
+try:
+    model, metadata, threshold = load_everything()
+    st.success("✅ Modèle SAINT chargé avec succès")
+except Exception as e:
+    st.error(f"Erreur chargement modèle : {e}")
     st.stop()
 
-df = pd.read_csv(uploaded_file)
-df.columns = [c.strip() for c in df.columns]
+# ==========================================================
+# CSV INPUT
+# ==========================================================
 
-st.success("Fichier chargé avec succès")
-st.write(f"Lignes : {df.shape[0]} | Colonnes : {df.shape[1]}")
+st.subheader("📂 Charger un CSV")
+
+file = st.file_uploader("Importer votre dataset", type=["csv"])
+
+if file is None:
+    st.stop()
+
+df = pd.read_csv(file)
+
+st.write("Aperçu des données :", df.head())
 
 # ==========================================================
 # SELECTION INDIVIDU
 # ==========================================================
-st.subheader("🎯 Sélection d’un individu")
 
-row_id = st.slider("Choisir un individu", 0, len(df) - 1, 0)
-row = df.iloc[row_id]
+index = st.slider("Choisir une ligne", 0, len(df)-1, 0)
+row = df.iloc[index]
 
 # ==========================================================
-# PREPARATION INPUT SAINT
+# PREP INPUT
 # ==========================================================
+
 categorical_dims = metadata["categorical_dims"]
 numerical_columns = metadata["numerical_columns"]
 
-x_categ = []
-x_cont = []
+x_cat = []
+x_num = []
 
 for col in df.columns:
     if col in categorical_dims:
-        value = int(row[col])
-        x_categ.append(value)
+        x_cat.append(int(row[col]))
     elif col in numerical_columns:
-        value = float(row[col])
-        x_cont.append(value)
+        x_num.append(float(row[col]))
 
-if len(x_categ) == 0 or len(x_cont) == 0:
-    st.error("Les colonnes du CSV ne correspondent pas au modèle entraîné.")
-    st.stop()
-
-x_categ = torch.tensor([x_categ], dtype=torch.long)
-x_cont = torch.tensor([x_cont], dtype=torch.float)
+x_cat = torch.tensor([x_cat], dtype=torch.long)
+x_num = torch.tensor([x_num], dtype=torch.float)
 
 # ==========================================================
 # PREDICTION
 # ==========================================================
+
 with torch.no_grad():
-    output = model(x_categ, x_cont)
+    output = model(x_cat, x_num)
 
     if output.shape[1] == 1:
-        proba = torch.sigmoid(output).item()
+        prob = torch.sigmoid(output).item()
     else:
-        proba = torch.softmax(output, dim=1)[0][1].item()
+        prob = torch.softmax(output, dim=1)[0][1].item()
 
-prediction = 1 if proba >= threshold else 0
+prediction = 1 if prob >= threshold else 0
 
 # ==========================================================
-# RESULTATS
+# DISPLAY RESULT
 # ==========================================================
-st.subheader("📈 Résultat de la prédiction")
 
-col1, col2 = st.columns(2)
+st.subheader("📈 Résultat")
 
-if prediction == 0:
-    verdict = "Faible risque de défaut"
+if prediction == 1:
+    st.error(f"⚠️ Risque élevé ({prob:.2%})")
 else:
-    verdict = "Risque élevé de défaut"
+    st.success(f"✅ Faible risque ({prob:.2%})")
 
-col1.metric("Décision du modèle", verdict)
-col2.metric("Probabilité de défaut", f"{proba:.2%}")
-
-st.markdown(f"Seuil appliqué : **{threshold:.4f}**")
-
-st.success("Modèle SAINT chargé dynamiquement depuis AWS S3.")
+st.write(f"Seuil utilisé : {threshold:.4f}")
