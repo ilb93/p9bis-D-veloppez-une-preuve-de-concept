@@ -98,16 +98,37 @@ def load_saint_model_from_s3():
                 try:
                     # Utiliser l'URL publique S3
                     url = f"{base_url}/{filename}"
-                    response = requests.get(url, stream=True)
-                    response.raise_for_status()
                     
-                    # Sauvegarder le fichier
-                    with open(local_path, 'wb') as f:
-                        for chunk in response.iter_content(chunk_size=8192):
-                            f.write(chunk)
+                    # Télécharger avec gestion des erreurs et vérification
+                    with st.spinner(f"📥 Téléchargement de {filename}..."):
+                        response = requests.get(url, stream=True, timeout=300)
+                        response.raise_for_status()
+                        
+                        # Vérifier la taille du fichier
+                        total_size = int(response.headers.get('content-length', 0))
+                        
+                        # Sauvegarder le fichier avec barre de progression
+                        downloaded = 0
+                        with open(local_path, 'wb') as f:
+                            for chunk in response.iter_content(chunk_size=8192):
+                                if chunk:
+                                    f.write(chunk)
+                                    downloaded += len(chunk)
+                        
+                        # Vérifier que le fichier est complet
+                        if total_size > 0 and downloaded != total_size:
+                            local_path.unlink()  # Supprimer le fichier incomplet
+                            raise ValueError(f"Fichier incomplet: {downloaded}/{total_size} bytes téléchargés")
+                        
+                        # Vérifier que le fichier existe et n'est pas vide
+                        if not local_path.exists() or local_path.stat().st_size == 0:
+                            raise ValueError(f"Le fichier {filename} est vide ou n'existe pas")
                     
-                    st.success(f"✅ {filename} téléchargé depuis S3")
+                    st.success(f"✅ {filename} téléchargé depuis S3 ({local_path.stat().st_size / 1024 / 1024:.2f} MB)")
                 except Exception as e:
+                    # Supprimer le fichier corrompu s'il existe
+                    if local_path.exists():
+                        local_path.unlink()
                     st.error(f"❌ Erreur lors du téléchargement de {filename}: {str(e)}")
                     st.info(f"💡 URL tentée: {base_url}/{filename}")
                     raise
