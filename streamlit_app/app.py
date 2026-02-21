@@ -95,14 +95,25 @@ def load_saint_model_from_s3():
         for key, filename in files.items():
             local_path = cache_dir / filename
             
-            # Télécharger depuis S3 si nécessaire
-            if not local_path.exists():
+            # Télécharger depuis S3 si nécessaire ou si le fichier est suspect
+            max_retries = 3
+            retry_count = 0
+            download_success = False
+            
+            while retry_count < max_retries and not download_success:
                 try:
+                    # Supprimer le fichier existant s'il est suspect (trop petit ou corrompu)
+                    if local_path.exists():
+                        file_size = local_path.stat().st_size
+                        # Si le fichier est très petit (< 1KB), il est probablement corrompu
+                        if file_size < 1024:
+                            local_path.unlink()
+                    
                     # Utiliser l'URL publique S3
                     url = f"{base_url}/{filename}"
                     
                     # Télécharger avec gestion des erreurs et vérification
-                    with st.spinner(f"📥 Téléchargement de {filename}..."):
+                    with st.spinner(f"📥 Téléchargement de {filename}... (tentative {retry_count + 1}/{max_retries})"):
                         response = requests.get(url, stream=True, timeout=300)
                         response.raise_for_status()
                         
@@ -125,15 +136,37 @@ def load_saint_model_from_s3():
                         # Vérifier que le fichier existe et n'est pas vide
                         if not local_path.exists() or local_path.stat().st_size == 0:
                             raise ValueError(f"Le fichier {filename} est vide ou n'existe pas")
-                    
-                    st.success(f"✅ {filename} téléchargé depuis S3 ({local_path.stat().st_size / 1024 / 1024:.2f} MB)")
+                        
+                        # Vérifier l'intégrité du fichier PyTorch si c'est un fichier .pth
+                        if filename.endswith('.pth'):
+                            try:
+                                # Essayer de lire le début du fichier pour vérifier qu'il est valide
+                                with open(local_path, 'rb') as f:
+                                    # Les fichiers PyTorch commencent par PK (ZIP format)
+                                    header = f.read(2)
+                                    if header != b'PK':
+                                        raise ValueError(f"Le fichier {filename} n'est pas un fichier PyTorch valide (header: {header})")
+                            except Exception as e:
+                                local_path.unlink()
+                                raise ValueError(f"Fichier PyTorch invalide: {str(e)}")
+                        
+                        download_success = True
+                        st.success(f"✅ {filename} téléchargé depuis S3 ({local_path.stat().st_size / 1024 / 1024:.2f} MB)")
+                        
                 except Exception as e:
+                    retry_count += 1
                     # Supprimer le fichier corrompu s'il existe
                     if local_path.exists():
                         local_path.unlink()
-                    st.error(f"❌ Erreur lors du téléchargement de {filename}: {str(e)}")
-                    st.info(f"💡 URL tentée: {base_url}/{filename}")
-                    raise
+                    
+                    if retry_count >= max_retries:
+                        st.error(f"❌ Erreur lors du téléchargement de {filename} après {max_retries} tentatives: {str(e)}")
+                        st.info(f"💡 URL tentée: {base_url}/{filename}")
+                        raise
+                    else:
+                        st.warning(f"⚠️ Tentative {retry_count} échouée, nouvelle tentative...")
+                        import time
+                        time.sleep(2)  # Attendre 2 secondes avant de réessayer
             
             file_paths[key] = local_path
         
