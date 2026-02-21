@@ -11,3 +11,4 @@ torch
 saint
 pytorch-lightning
 requests
+lit_saint
