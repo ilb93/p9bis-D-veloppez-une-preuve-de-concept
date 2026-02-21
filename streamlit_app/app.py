@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+from saint.model import Saint
+from saint.config import SaintConfig
 
 # ======================================================
 # CONFIG STREAMLIT
