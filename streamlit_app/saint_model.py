@@ -210,6 +210,10 @@ def predict_saint(model_data, X, device='cpu'):
     # Prédiction
     with torch.no_grad():
         try:
+            # Vérifier que X a la bonne forme
+            if X.shape[1] != model.num_features:
+                raise ValueError(f"Nombre de features incompatible: attendu {model.num_features}, obtenu {X.shape[1]}")
+            
             # Essayer d'appeler le modèle
             if hasattr(model, 'forward'):
                 logits = model.forward(X)
@@ -226,17 +230,23 @@ def predict_saint(model_data, X, device='cpu'):
             if logits.dim() > 1:
                 logits = logits.squeeze()
             
-            # Appliquer sigmoid
-            if hasattr(torch.nn.functional, 'sigmoid'):
-                proba = torch.sigmoid(logits).cpu().item()
+            # Si logits est un tensor avec plusieurs valeurs, prendre la première
+            if isinstance(logits, torch.Tensor):
+                if logits.numel() > 1:
+                    logits = logits[0]
+                logits_value = logits.item()
             else:
-                proba = torch.special.expit(logits).cpu().item()
+                logits_value = float(logits)
+            
+            # Appliquer sigmoid
+            proba = 1.0 / (1.0 + np.exp(-logits_value))  # sigmoid manuel pour plus de contrôle
             
             # S'assurer que la probabilité est entre 0 et 1
             proba = max(0.0, min(1.0, proba))
             
         except Exception as e:
-            raise RuntimeError(f"Erreur lors de la prédiction: {str(e)}")
+            import traceback
+            raise RuntimeError(f"Erreur lors de la prédiction: {str(e)}\n{traceback.format_exc()}")
     
     return proba
 

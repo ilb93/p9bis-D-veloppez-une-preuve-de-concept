@@ -429,8 +429,21 @@ if EXPECTED_FEATURES and len(EXPECTED_FEATURES) > 0:
     st.subheader("🔍 Prédiction du modèle SAINT")
     
     try:
+        # Debug: Afficher les valeurs des features pour vérification
+        with st.expander("🔍 Debug - Détails de la prédiction", expanded=False):
+            st.write("**Features utilisées pour la prédiction:**")
+            st.dataframe(X_row.T, use_container_width=True)
+            st.write(f"**Shape:** {X_row.shape}")
+            st.write(f"**Valeurs min/max:** {X_row.min().min():.2f} / {X_row.max().max():.2f}")
+            st.write(f"**Nombre de features attendu par le modèle:** {model_data['model'].num_features if hasattr(model_data['model'], 'num_features') else 'N/A'}")
+            st.write(f"**Premières valeurs:** {X_row.iloc[0, :5].tolist()}")
+        
         # Utiliser la fonction de prédiction SAINT
         proba = predict_saint(model_data, X_row, device='cpu')
+        
+        # Debug: Afficher la probabilité brute
+        with st.expander("🔍 Debug - Résultat de la prédiction", expanded=False):
+            st.write(f"**Probabilité calculée:** {proba:.6f}")
         
         # Appliquer le seuil si disponible
         threshold = model_data.get('threshold', 0.5)
