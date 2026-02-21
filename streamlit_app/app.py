@@ -275,6 +275,13 @@ try:
         EXPECTED_FEATURES = None  # Sera défini depuis le CSV
     else:
         st.info(f"📋 {len(EXPECTED_FEATURES)} features attendues par le modèle")
+        # Debug: Afficher les features attendues
+        with st.expander("📋 Voir les features attendues par le modèle", expanded=False):
+            st.write("**Ordre des features:**")
+            for i, feat in enumerate(EXPECTED_FEATURES[:20]):  # Afficher les 20 premières
+                st.write(f"{i+1}. {feat}")
+            if len(EXPECTED_FEATURES) > 20:
+                st.write(f"... et {len(EXPECTED_FEATURES) - 20} autres")
 except Exception as e:
     st.warning(f"⚠️ Erreur lors de l'extraction des features: {str(e)}")
     st.info("💡 Les features seront déduites depuis les colonnes du CSV chargé.")
