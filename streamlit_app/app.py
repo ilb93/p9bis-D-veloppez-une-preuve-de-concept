@@ -1,7 +1,9 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-import joblib
+import torch
+import boto3
+import os
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
@@ -9,6 +11,7 @@ from matplotlib.ticker import FuncFormatter
 # ======================================================
 # CONFIG STREAMLIT
 # ======================================================
+
 st.set_page_config(
     page_title="Proof of Concept – Scoring de risque de crédit",
     layout="wide"
@@ -18,39 +21,72 @@ st.title("📊 Proof of Concept – Scoring de risque de défaut de remboursemen
 
 st.markdown(
     """
-Cette application présente une **preuve de concept** de scoring de risque basée sur un modèle **LightGBM**.
+Cette application présente une **preuve de concept** de scoring de risque basée sur un modèle **SAINT (Transformer tabulaire)**.
 
-- Les **graphiques** affichent des **valeurs métier lisibles (années / euros)**  
-- La **prédiction** utilise **exactement les variables attendues par le modèle**
-- La **décision est expliquée** à l’aide des contributions locales natives du modèle
+- Les **graphiques** affichent des **valeurs métier lisibles (années / euros)**
+- La **prédiction** repose sur un modèle Deep Learning (SAINT)
+- Le modèle est chargé dynamiquement depuis **AWS S3**
 """
 )
 
 # ======================================================
-# CHARGEMENT MODÈLE
+# CONFIG S3
 # ======================================================
+
+BUCKET_NAME = "projetmodelsaint"
+WEIGHTS_KEY = "saint_weights.pth"
+LOCAL_WEIGHTS = "saint_weights.pth"
+
+# ⚠️ IMPORTANT :
+# Tu dois avoir saint_model.py dans ton projet
+# avec la classe SAINT identique à l'entraînement
+
+from saint_model import SAINT
+
+
+def download_from_s3():
+    s3 = boto3.client("s3")
+    s3.download_file(BUCKET_NAME, WEIGHTS_KEY, LOCAL_WEIGHTS)
+
+
 @st.cache_resource
 def load_model():
-    return joblib.load(Path("artifacts") / "lgbm.joblib")
+
+    # Télécharger si absent
+    if not os.path.exists(LOCAL_WEIGHTS):
+        download_from_s3()
+
+    # ⚠️ Mets EXACTEMENT les mêmes paramètres qu'à l'entraînement
+    model = SAINT(
+        # Exemple :
+        # dim=256,
+        # depth=6,
+        # heads=8,
+        # attn_dropout=0.1,
+        # ff_dropout=0.1,
+        # categories=...,
+        # num_continuous=...,
+        # etc.
+    )
+
+    model.load_state_dict(
+        torch.load(LOCAL_WEIGHTS, map_location="cpu")
+    )
+
+    model.eval()
+    return model
+
 
 model = load_model()
-
-def get_expected_features(m):
-    if hasattr(m, "booster_") and m.booster_ is not None:
-        return list(m.booster_.feature_name())
-    if hasattr(m, "feature_name_"):
-        return list(m.feature_name_)
-    raise RuntimeError("Impossible de récupérer les features du modèle.")
-
-EXPECTED_FEATURES = get_expected_features(model)
 
 # ======================================================
 # UPLOAD CSV
 # ======================================================
+
 st.subheader("📂 Import du fichier CSV")
 
 uploaded_file = st.file_uploader(
-    "Importer le fichier CSV unifié (ex : sample_unified.csv)",
+    "Importer le fichier CSV unifié",
     type=["csv"]
 )
 
@@ -67,8 +103,9 @@ st.markdown("### 📈 Statistiques descriptives")
 st.dataframe(df.describe().T, use_container_width=True)
 
 # ======================================================
-# OUTILS DE FORMATAGE
+# OUTILS FORMATAGE
 # ======================================================
+
 def euro_fmt(x, pos=None):
     try:
         return f"{x:,.0f} €".replace(",", " ")
@@ -90,8 +127,9 @@ def clean_money(s):
     return s.where(s >= 0, np.nan)
 
 # ======================================================
-# VARIABLES MÉTIER LISIBLES
+# VARIABLES LISIBLES
 # ======================================================
+
 human_df = pd.DataFrame({
     "Âge (années)": clean_age_years(df["age_years"]),
     "Ancienneté emploi (années)": clean_employment_years(df["employment_years"]),
@@ -103,6 +141,7 @@ human_df = pd.DataFrame({
 # ======================================================
 # ANALYSE EXPLORATOIRE
 # ======================================================
+
 st.subheader("📊 Analyse exploratoire – population")
 
 var_label = st.selectbox("Choisir une variable", human_df.columns)
@@ -131,13 +170,15 @@ with col_info:
 # ======================================================
 # SÉLECTION INDIVIDU
 # ======================================================
+
 st.subheader("🎯 Sélection d’un individu")
 
 row_id = st.slider("Choisir un individu", 0, len(df) - 1, 0)
 
 # ======================================================
-# POSITION DE L’INDIVIDU
+# POSITION DANS LA POPULATION
 # ======================================================
+
 st.markdown("### 📍 Position de l’individu dans la population")
 
 val = human_df.loc[row_id, var_label]
@@ -154,67 +195,27 @@ if "€" in var_label:
 st.pyplot(fig2)
 
 # ======================================================
-# PRÉPARATION DONNÉES MODÈLE
+# PRÉPARATION DONNÉES POUR SAINT
 # ======================================================
-def build_model_row(data, idx, expected):
-    row = {}
-    for f in expected:
-        if f in data.columns:
-            v = pd.to_numeric(data.loc[idx, f], errors="coerce")
-            row[f] = 0.0 if pd.isna(v) else float(v)
-        else:
-            row[f] = 0.0
-    return pd.DataFrame([row], columns=expected)
 
-X_row = build_model_row(df, row_id, EXPECTED_FEATURES)
+X_row = df.iloc[[row_id]].astype(float)
 
 # ======================================================
-# INTERPRÉTABILITÉ LOCALE (LightGBM natif)
+# PRÉDICTION SAINT
 # ======================================================
-st.subheader("🔍 Interprétabilité du modèle – facteurs explicatifs")
 
-contribs = model.predict(X_row, pred_contrib=True)[0]
+with torch.no_grad():
+    input_tensor = torch.tensor(
+        X_row.values,
+        dtype=torch.float32
+    )
 
-contrib_df = pd.DataFrame({
-    "Variable": EXPECTED_FEATURES + ["Biais"],
-    "Contribution au risque": contribs
-})
-
-contrib_df = contrib_df[contrib_df["Variable"] != "Biais"]
-contrib_df["Impact absolu"] = contrib_df["Contribution au risque"].abs()
-contrib_df = contrib_df.sort_values("Impact absolu", ascending=False).head(10)
-
-st.markdown(
-    """
-Les variables ci-dessous sont celles qui ont **le plus influencé la décision du modèle** :
-
-- **Contribution positive** → augmente le risque de défaut  
-- **Contribution négative** → réduit le risque de défaut
-"""
-)
-
-st.dataframe(
-    contrib_df[["Variable", "Contribution au risque"]],
-    use_container_width=True
-)
-
-fig_imp, ax = plt.subplots(figsize=(8, 4))
-colors = contrib_df["Contribution au risque"].apply(lambda x: "red" if x > 0 else "green")
-
-ax.barh(
-    contrib_df["Variable"],
-    contrib_df["Contribution au risque"],
-    color=colors
-)
-ax.set_title("Impact des variables sur la prédiction individuelle")
-ax.invert_yaxis()
-
-st.pyplot(fig_imp)
+    outputs = model(input_tensor)
+    proba = torch.softmax(outputs, dim=1)[0][1].item()
 
 # ======================================================
-# RÉSULTAT FINAL
+# RÉSULTAT
 # ======================================================
-proba = float(model.predict_proba(X_row)[0][1])
 
 if proba < 0.3:
     verdict = "Faible risque de crédit"
@@ -232,16 +233,18 @@ c2.metric("Probabilité de défaut", f"{proba:.2%}")
 # ======================================================
 # CONCLUSION
 # ======================================================
+
 st.subheader("✅ Conclusion")
 
 st.markdown(
     """
-Cette preuve de concept démontre une **approche professionnelle du scoring de risque de crédit**, combinant :
+Cette preuve de concept démontre une approche moderne du scoring de crédit,
+reposant sur un **modèle Transformer tabulaire (SAINT)** déployé
+dynamiquement via AWS S3.
 
-- une **analyse exploratoire métier** fondée sur des variables interprétables,
-- une **évaluation individuelle contextualisée** par rapport à la population,
-- une **prédiction explicable**, reposant sur un modèle LightGBM et ses contributions locales natives.
-
-L’objectif est de **rendre compréhensible une décision algorithmique complexe**, afin de faciliter son appropriation par des utilisateurs non techniques, tout en respectant les contraintes d’un déploiement industriel.
+Elle illustre la capacité à :
+- industrialiser un modèle Deep Learning,
+- séparer code et artefacts,
+- déployer proprement en environnement cloud.
 """
 )
