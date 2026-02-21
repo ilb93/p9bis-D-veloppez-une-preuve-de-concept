@@ -10,3 +10,4 @@ boto3
 torch
 saint
 pytorch-lightning
+requests
