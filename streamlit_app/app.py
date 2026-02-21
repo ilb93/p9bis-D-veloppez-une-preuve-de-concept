@@ -1,130 +1,195 @@
 import streamlit as st
+import pandas as pd
+import numpy as np
 import torch
 import torch.nn as nn
 import pickle
-import numpy as np
-import requests
-import os
+from pathlib import Path
+import matplotlib.pyplot as plt
+from matplotlib.ticker import FuncFormatter
 
-# =====================================================
-# CONFIG
-# =====================================================
-
-st.set_page_config(page_title="SAINT Scoring POC", layout="centered")
-st.title("Proof of Concept – SAINT Transformer")
-st.write("Deep Learning tabulaire – Modèle chargé depuis S3")
-
-# =====================================================
-# S3 URLS
-# =====================================================
-
-BASE_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/"
-
-FILES = {
-    "weights": "saint_weights.pth",
-    "config": "saint_config.pkl",
-    "metadata": "saint_metadata.pkl",
-    "threshold": "saint_threshold.pkl"
-}
-
-LOCAL_DIR = "models"
-os.makedirs(LOCAL_DIR, exist_ok=True)
-
-# =====================================================
-# DOWNLOAD FILES IF NOT EXISTS
-# =====================================================
-
-def download_file(filename):
-    local_path = os.path.join(LOCAL_DIR, filename)
-    if not os.path.exists(local_path):
-        url = BASE_URL + filename
-        r = requests.get(url)
-        if r.status_code == 200:
-            with open(local_path, "wb") as f:
-                f.write(r.content)
-        else:
-            st.error(f"Erreur téléchargement {filename}")
-            st.stop()
-    return local_path
-
-paths = {}
-for key, file in FILES.items():
-    paths[key] = download_file(file)
-
-# =====================================================
-# LOAD CONFIG
-# =====================================================
-
-with open(paths["config"], "rb") as f:
-    config = pickle.load(f)
-
-with open(paths["metadata"], "rb") as f:
-    metadata = pickle.load(f)
-
-with open(paths["threshold"], "rb") as f:
-    threshold = pickle.load(f)
-
-# =====================================================
-# SIMPLE SAINT ARCHITECTURE (inference only)
-# =====================================================
-
-class SimpleSaint(nn.Module):
-    def __init__(self, input_dim, dim, depth):
-        super().__init__()
-
-        layers = []
-        current_dim = input_dim
-
-        for _ in range(depth):
-            layers.append(nn.Linear(current_dim, dim))
-            layers.append(nn.ReLU())
-            current_dim = dim
-
-        layers.append(nn.Linear(dim, 1))
-        self.network = nn.Sequential(*layers)
-
-    def forward(self, x):
-        return self.network(x)
-
-# =====================================================
-# BUILD MODEL
-# =====================================================
-
-input_dim = len(metadata["numerical_columns"])
-
-model = SimpleSaint(
-    input_dim=input_dim,
-    dim=config["dim"],
-    depth=config["depth"]
+# ======================================================
+# CONFIG STREAMLIT
+# ======================================================
+st.set_page_config(
+    page_title="Proof of Concept – Scoring de risque de crédit",
+    layout="wide"
 )
 
-state_dict = torch.load(paths["weights"], map_location="cpu")
-model.load_state_dict(state_dict, strict=False)
-model.eval()
+st.title("📊 Proof of Concept – Scoring de risque de défaut de remboursement")
 
-st.success("Modèle chargé avec succès")
+st.markdown(
+    """
+Cette application présente une **preuve de concept** de scoring de risque basée sur un modèle **SAINT Transformer**.
 
-# =====================================================
-# UI
-# =====================================================
+- Les **graphiques** affichent des **valeurs métier lisibles (années / euros)**  
+- La **prédiction** utilise **exactement les variables attendues par le modèle**
+- La **décision est fondée sur un modèle Deep Learning tabulaire**
+"""
+)
 
-st.subheader("Test de prédiction")
+# ======================================================
+# CHARGEMENT MODÈLE SAINT
+# ======================================================
 
-inputs = []
+@st.cache_resource
+def load_saint():
 
-for col in metadata["numerical_columns"]:
-    value = st.number_input(col, value=0.0)
-    inputs.append(value)
+    with open("models/saint_config.pkl", "rb") as f:
+        config = pickle.load(f)
 
-if st.button("Predict"):
-    x = torch.tensor([inputs], dtype=torch.float32)
+    with open("models/saint_metadata.pkl", "rb") as f:
+        metadata = pickle.load(f)
 
-    with torch.no_grad():
-        output = model(x)
-        prob = torch.sigmoid(output).item()
+    with open("models/saint_threshold.pkl", "rb") as f:
+        threshold = pickle.load(f)
 
-    prediction = int(prob >= threshold)
+    input_dim = len(metadata["numerical_columns"])
 
-    st.write("### Résultat")
-    st.write("Probabilité :", round(prob, 4))
-    st.write("Classe prédite :", prediction)
+    class SimpleSaint(nn.Module):
+        def __init__(self, input_dim, dim, depth):
+            super().__init__()
+            layers = []
+            current_dim = input_dim
+            for _ in range(depth):
+                layers.append(nn.Linear(current_dim, dim))
+                layers.append(nn.ReLU())
+                current_dim = dim
+            layers.append(nn.Linear(dim, 1))
+            self.network = nn.Sequential(*layers)
+
+        def forward(self, x):
+            return self.network(x)
+
+    model = SimpleSaint(
+        input_dim=input_dim,
+        dim=config["dim"],
+        depth=config["depth"]
+    )
+
+    state_dict = torch.load("models/saint_weights.pth", map_location="cpu")
+    model.load_state_dict(state_dict, strict=False)
+    model.eval()
+
+    return model, metadata, threshold
+
+
+model, metadata, THRESHOLD = load_saint()
+EXPECTED_FEATURES = metadata["numerical_columns"]
+
+# ======================================================
+# UPLOAD CSV
+# ======================================================
+st.subheader("📂 Import du fichier CSV")
+
+uploaded_file = st.file_uploader(
+    "Importer le fichier CSV unifié (ex : sample_unified.csv)",
+    type=["csv"]
+)
+
+if uploaded_file is None:
+    st.stop()
+
+df = pd.read_csv(uploaded_file)
+df.columns = [c.strip() for c in df.columns]
+
+st.success("Fichier chargé avec succès")
+st.write(f"Lignes : {df.shape[0]} | Colonnes : {df.shape[1]}")
+
+st.markdown("### 📈 Statistiques descriptives")
+st.dataframe(df.describe().T, use_container_width=True)
+
+# ======================================================
+# FORMATAGE
+# ======================================================
+
+def euro_fmt(x, pos=None):
+    try:
+        return f"{x:,.0f} €".replace(",", " ")
+    except Exception:
+        return ""
+
+# ======================================================
+# VARIABLES MÉTIER
+# ======================================================
+
+human_df = df.copy()
+
+# ======================================================
+# ANALYSE EXPLORATOIRE
+# ======================================================
+
+st.subheader("📊 Analyse exploratoire – population")
+
+var_label = st.selectbox("Choisir une variable", EXPECTED_FEATURES)
+series = pd.to_numeric(df[var_label], errors="coerce").dropna()
+
+col_plot, col_info = st.columns([2, 1])
+
+with col_plot:
+    fig, ax = plt.subplots(figsize=(9, 4))
+    ax.hist(series, bins=30, edgecolor="black")
+    ax.set_title(f"Distribution — {var_label}")
+    ax.set_xlabel(var_label)
+    ax.set_ylabel("Nombre d'individus")
+    st.pyplot(fig)
+
+with col_info:
+    st.metric("Min", f"{series.min():.2f}")
+    st.metric("Médiane", f"{series.median():.2f}")
+    st.metric("Max", f"{series.max():.2f}")
+
+# ======================================================
+# SÉLECTION INDIVIDU
+# ======================================================
+
+st.subheader("🎯 Sélection d’un individu")
+
+row_id = st.slider("Choisir un individu", 0, len(df) - 1, 0)
+
+# ======================================================
+# PRÉPARATION DONNÉES MODÈLE
+# ======================================================
+
+def build_model_row(data, idx, expected):
+    row = []
+    for f in expected:
+        v = pd.to_numeric(data.loc[idx, f], errors="coerce")
+        row.append(0.0 if pd.isna(v) else float(v))
+    return torch.tensor([row], dtype=torch.float32)
+
+X_row = build_model_row(df, row_id, EXPECTED_FEATURES)
+
+# ======================================================
+# PRÉDICTION SAINT
+# ======================================================
+
+with torch.no_grad():
+    output = model(X_row)
+    proba = torch.sigmoid(output).item()
+
+if proba < THRESHOLD:
+    verdict = "Faible risque de crédit"
+elif proba < THRESHOLD + 0.2:
+    verdict = "Risque de crédit modéré"
+else:
+    verdict = "Risque de crédit élevé"
+
+st.subheader("📈 Résultat de la prédiction")
+
+c1, c2 = st.columns(2)
+c1.metric("Évaluation du profil", verdict)
+c2.metric("Probabilité de défaut", f"{proba:.2%}")
+
+# ======================================================
+# CONCLUSION
+# ======================================================
+
+st.subheader("✅ Conclusion")
+
+st.markdown(
+    """
+Cette preuve de concept démontre une **approche Deep Learning du scoring de crédit**, 
+tout en conservant une interface métier claire et exploitable.
+"""
+)
