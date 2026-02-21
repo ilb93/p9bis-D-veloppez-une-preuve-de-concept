@@ -19,12 +19,12 @@ sys.path.insert(0, str(current_dir))
 
 # Importer le modèle SAINT avec gestion d'erreur
 try:
-    # Essayer d'importer depuis le package
-    from streamlit_app.saint_model import SAINTModel, predict_saint, load_saint_model_from_files as load_saint_from_files
+    # Essayer d'importer directement depuis le même dossier (fonctionne sur Streamlit Cloud)
+    from saint_model import SAINTModel, predict_saint, load_saint_model_from_files as load_saint_from_files
 except ImportError:
     try:
-        # Essayer d'importer directement depuis le même dossier
-        from saint_model import SAINTModel, predict_saint, load_saint_model_from_files as load_saint_from_files
+        # Essayer d'importer depuis le package (pour développement local)
+        from streamlit_app.saint_model import SAINTModel, predict_saint, load_saint_model_from_files as load_saint_from_files
     except ImportError:
         # Dernier recours: importer depuis le chemin absolu
         import importlib.util
