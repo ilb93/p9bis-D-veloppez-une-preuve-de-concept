@@ -1,144 +1,121 @@
 import streamlit as st
 import torch
-import pandas as pd
-import numpy as np
 import requests
+import io
 import pickle
-import tempfile
-import os
+import numpy as np
+from lit_saint.model import Saint
+from lit_saint.config import SaintConfig
 
-st.set_page_config(page_title="SAINT Scoring", layout="wide")
+# ==========================================================
+# CONFIGURATION
+# ==========================================================
+
+WEIGHTS_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_weights.pth"
+CONFIG_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_config.pkl"
+META_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_metadata.pkl"
+THRESHOLD_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_threshold.pkl"
+
+st.set_page_config(page_title="SAINT Risk Scoring", layout="centered")
 
 st.title("📊 Proof of Concept – SAINT Transformer")
-
 st.markdown("""
-• Modèle chargé depuis AWS S3  
-• Deep Learning tabulaire  
-• Seuil optimisé F1-score  
+- Modèle chargé depuis AWS S3  
+- Deep Learning tabulaire  
+- Seuil optimisé F1-score  
 """)
 
 # ==========================================================
-# URLS S3 (ADAPTE SI BESOIN)
+# CHARGEMENT UTILITAIRES
 # ==========================================================
 
-BASE_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com"
+def load_pickle_from_s3(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    return pickle.load(io.BytesIO(response.content))
 
-MODEL_URL = f"{BASE_URL}/saint_full_model.pth"
-META_URL = f"{BASE_URL}/saint_metadata.pkl"
-THRESHOLD_URL = f"{BASE_URL}/saint_threshold.pkl"
 
-# ==========================================================
-# LOAD MODEL
-# ==========================================================
+def load_weights_from_s3(url):
+    response = requests.get(url)
+    response.raise_for_status()
+    buffer = io.BytesIO(response.content)
+    return torch.load(buffer, map_location="cpu")
+
 
 @st.cache_resource
-def load_everything():
+def load_model():
+    try:
+        # Charger config
+        config_dict = load_pickle_from_s3(CONFIG_URL)
 
-    tmp = tempfile.mkdtemp()
+        cfg = SaintConfig()
+        cfg.depth = config_dict["depth"]
+        cfg.heads = config_dict["heads"]
+        cfg.dim = config_dict["dim"]
+        cfg.lr = config_dict["lr"]
+        cfg.dropout = config_dict["dropout"]
+        cfg.class_weights = config_dict["class_weights"]
 
-    model_path = os.path.join(tmp, "model.pth")
-    meta_path = os.path.join(tmp, "meta.pkl")
-    threshold_path = os.path.join(tmp, "threshold.pkl")
+        # Charger metadata
+        metadata = load_pickle_from_s3(META_URL)
 
-    # téléchargement modèle
-    with open(model_path, "wb") as f:
-        f.write(requests.get(MODEL_URL).content)
+        # Créer modèle
+        model = Saint(
+            categories=metadata["categorical_dims"],
+            continuous=metadata["numerical_columns"],
+            config=cfg,
+            dim_target=metadata["dim_target"]
+        )
 
-    with open(meta_path, "wb") as f:
-        f.write(requests.get(META_URL).content)
+        # Charger poids
+        state_dict = load_weights_from_s3(WEIGHTS_URL)
+        model.load_state_dict(state_dict)
 
-    with open(threshold_path, "wb") as f:
-        f.write(requests.get(THRESHOLD_URL).content)
+        model.eval()
 
-    # ⚠️ chargement robuste
-    model = torch.load(
-        model_path,
-        map_location="cpu",
-        weights_only=False
-    )
+        # Charger threshold
+        threshold = load_pickle_from_s3(THRESHOLD_URL)
 
-    model.eval()
+        return model, threshold, metadata
 
-    with open(meta_path, "rb") as f:
-        metadata = pickle.load(f)
-
-    with open(threshold_path, "rb") as f:
-        threshold = pickle.load(f)
-
-    return model, metadata, threshold
+    except Exception as e:
+        st.error(f"Erreur chargement modèle : {e}")
+        return None, None, None
 
 
-try:
-    model, metadata, threshold = load_everything()
-    st.success("✅ Modèle SAINT chargé avec succès")
-except Exception as e:
-    st.error(f"Erreur chargement modèle : {e}")
-    st.stop()
-
-# ==========================================================
-# CSV INPUT
-# ==========================================================
-
-st.subheader("📂 Charger un CSV")
-
-file = st.file_uploader("Importer votre dataset", type=["csv"])
-
-if file is None:
-    st.stop()
-
-df = pd.read_csv(file)
-
-st.write("Aperçu des données :", df.head())
+model, threshold, metadata = load_model()
 
 # ==========================================================
-# SELECTION INDIVIDU
+# INTERFACE SIMPLE DE TEST
 # ==========================================================
 
-index = st.slider("Choisir une ligne", 0, len(df)-1, 0)
-row = df.iloc[index]
+if model is not None:
 
-# ==========================================================
-# PREP INPUT
-# ==========================================================
+    st.subheader("Test prédiction")
 
-categorical_dims = metadata["categorical_dims"]
-numerical_columns = metadata["numerical_columns"]
+    # Création input dummy compatible
+    numerical_input = []
+    for col in metadata["numerical_columns"]:
+        value = st.number_input(f"{col}", value=0.0)
+        numerical_input.append(value)
 
-x_cat = []
-x_num = []
+    if st.button("Prédire"):
 
-for col in df.columns:
-    if col in categorical_dims:
-        x_cat.append(int(row[col]))
-    elif col in numerical_columns:
-        x_num.append(float(row[col]))
+        with torch.no_grad():
 
-x_cat = torch.tensor([x_cat], dtype=torch.long)
-x_num = torch.tensor([x_num], dtype=torch.float)
+            x_num = torch.tensor([numerical_input], dtype=torch.float32)
 
-# ==========================================================
-# PREDICTION
-# ==========================================================
+            # Dummy catégories (si pas utilisées)
+            if len(metadata["categorical_dims"]) > 0:
+                x_cat = torch.zeros((1, len(metadata["categorical_dims"])), dtype=torch.long)
+            else:
+                x_cat = None
 
-with torch.no_grad():
-    output = model(x_cat, x_num)
+            output = model(x_cat, x_num)
+            prob = torch.sigmoid(output).item()
 
-    if output.shape[1] == 1:
-        prob = torch.sigmoid(output).item()
-    else:
-        prob = torch.softmax(output, dim=1)[0][1].item()
+            prediction = int(prob >= threshold)
 
-prediction = 1 if prob >= threshold else 0
-
-# ==========================================================
-# DISPLAY RESULT
-# ==========================================================
-
-st.subheader("📈 Résultat")
-
-if prediction == 1:
-    st.error(f"⚠️ Risque élevé ({prob:.2%})")
-else:
-    st.success(f"✅ Faible risque ({prob:.2%})")
-
-st.write(f"Seuil utilisé : {threshold:.4f}")
+            st.write("### Résultat")
+            st.write(f"Probabilité : {prob:.4f}")
+            st.write(f"Classe prédite : {prediction}")
