@@ -140,23 +140,33 @@ def load_saint_model_from_files(weights_path, config_path, metadata_path, thresh
         # Pour les versions antérieures de PyTorch qui n'ont pas weights_only
         weights = torch.load(weights_path, map_location=device)
     
-    # Si c'est un state_dict, charger directement
-    if isinstance(weights, dict):
+    # Vérifier si c'est un modèle complet (nn.Module) ou un state_dict
+    if isinstance(weights, torch.nn.Module):
+        # Si c'est un modèle complet, l'utiliser directement
+        model = weights
+    elif isinstance(weights, dict):
+        # Si c'est un dictionnaire, extraire le state_dict
         if 'model_state_dict' in weights:
-            model.load_state_dict(weights['model_state_dict'])
+            state_dict = weights['model_state_dict']
         elif 'state_dict' in weights:
-            model.load_state_dict(weights['state_dict'])
+            state_dict = weights['state_dict']
         else:
             # Essayer de charger directement comme state_dict
+            state_dict = weights
+        
+        # Charger le state_dict dans le modèle
+        try:
+            model.load_state_dict(state_dict, strict=False)
+        except Exception as e:
+            # Si le chargement strict échoue, essayer sans strict
             try:
-                model.load_state_dict(weights)
-            except:
-                # Si ça ne marche pas, peut-être que weights est le modèle complet
-                model = weights
+                model.load_state_dict(state_dict, strict=False)
+            except Exception as e2:
+                raise RuntimeError(f"Impossible de charger le state_dict dans le modèle: {str(e2)}")
     else:
-        # Si weights est le modèle complet
-        model = weights
+        raise ValueError(f"Format de poids non reconnu: {type(weights)}")
     
+    # Déplacer le modèle sur le device et le mettre en mode évaluation
     model.to(device)
     model.eval()
     
