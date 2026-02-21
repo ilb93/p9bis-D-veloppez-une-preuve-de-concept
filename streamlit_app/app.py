@@ -23,17 +23,19 @@ try:
     from saint_model import SAINTModel, predict_saint, load_saint_model_from_files as load_saint_from_files
 except ImportError:
     try:
-        # Essayer d'importer depuis le package (pour développement local)
-        from streamlit_app.saint_model import SAINTModel, predict_saint, load_saint_model_from_files as load_saint_from_files
-    except ImportError:
         # Dernier recours: importer depuis le chemin absolu
         import importlib.util
         spec = importlib.util.spec_from_file_location("saint_model", current_dir / "saint_model.py")
+        if spec is None or spec.loader is None:
+            raise ImportError("Cannot load saint_model module")
         saint_module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(saint_module)
         SAINTModel = saint_module.SAINTModel
         predict_saint = saint_module.predict_saint
         load_saint_from_files = saint_module.load_saint_model_from_files
+    except Exception as e:
+        st.error(f"❌ Erreur lors de l'import du module SAINT: {str(e)}")
+        st.stop()
 
 # ======================================================
 # CONFIG STREAMLIT
