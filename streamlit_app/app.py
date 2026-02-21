@@ -2,8 +2,8 @@ import streamlit as st
 import pandas as pd
 import numpy as np
 import torch
-import boto3
 import pickle
+import requests
 import tempfile
 import os
 
@@ -20,42 +20,53 @@ st.title("📊 Proof of Concept – Scoring de risque (SAINT Transformer)")
 st.markdown("""
 Cette application présente une **preuve de concept** basée sur un modèle **SAINT (Transformer tabulaire)**.
 
-- Modèle chargé dynamiquement depuis AWS S3  
-- Deep Learning pour données tabulaires  
-- Seuil optimisé via F1-score  
+• Modèle chargé dynamiquement depuis AWS S3 (lecture publique)  
+• Deep Learning pour données tabulaires  
+• Seuil optimisé via F1-score  
 """)
 
 # ==========================================================
-# CONFIG S3
+# URLS S3 PUBLIQUES
 # ==========================================================
-BUCKET_NAME = "projetmodelsaint"
-
-MODEL_KEY = "saint_full_model.pth"
-THRESHOLD_KEY = "saint_threshold.pkl"
-META_KEY = "saint_metadata.pkl"
+MODEL_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_full_model.pth"
+THRESHOLD_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_threshold.pkl"
+META_URL = "https://projetmodelsaint.s3.eu-north-1.amazonaws.com/saint_metadata.pkl"
 
 # ==========================================================
-# FONCTION DE CHARGEMENT S3
+# CHARGEMENT DU MODELE
 # ==========================================================
 @st.cache_resource
-def load_from_s3():
-
-    s3 = boto3.client(
-        "s3",
-        aws_access_key_id=st.secrets["AWS_ACCESS_KEY_ID"],
-        aws_secret_access_key=st.secrets["AWS_SECRET_ACCESS_KEY"],
-        region_name=st.secrets["AWS_REGION"]
-    )
+def load_model():
 
     temp_dir = tempfile.mkdtemp()
 
-    model_path = os.path.join(temp_dir, MODEL_KEY)
-    threshold_path = os.path.join(temp_dir, THRESHOLD_KEY)
-    meta_path = os.path.join(temp_dir, META_KEY)
+    model_path = os.path.join(temp_dir, "model.pth")
+    threshold_path = os.path.join(temp_dir, "threshold.pkl")
+    meta_path = os.path.join(temp_dir, "metadata.pkl")
 
-    s3.download_file(BUCKET_NAME, MODEL_KEY, model_path)
-    s3.download_file(BUCKET_NAME, THRESHOLD_KEY, threshold_path)
-    s3.download_file(BUCKET_NAME, META_KEY, meta_path)
+    # téléchargement modèle
+    r = requests.get(MODEL_URL)
+    if r.status_code != 200:
+        st.error("Impossible de télécharger le modèle depuis S3.")
+        st.stop()
+    with open(model_path, "wb") as f:
+        f.write(r.content)
+
+    # téléchargement threshold
+    r = requests.get(THRESHOLD_URL)
+    if r.status_code != 200:
+        st.error("Impossible de télécharger le threshold depuis S3.")
+        st.stop()
+    with open(threshold_path, "wb") as f:
+        f.write(r.content)
+
+    # téléchargement metadata
+    r = requests.get(META_URL)
+    if r.status_code != 200:
+        st.error("Impossible de télécharger les metadata depuis S3.")
+        st.stop()
+    with open(meta_path, "wb") as f:
+        f.write(r.content)
 
     model = torch.load(model_path, map_location="cpu")
     model.eval()
@@ -69,7 +80,7 @@ def load_from_s3():
     return model, threshold, metadata
 
 
-model, threshold, metadata = load_from_s3()
+model, threshold, metadata = load_model()
 
 # ==========================================================
 # UPLOAD CSV
@@ -85,16 +96,18 @@ df = pd.read_csv(uploaded_file)
 df.columns = [c.strip() for c in df.columns]
 
 st.success("Fichier chargé avec succès")
+st.write(f"Lignes : {df.shape[0]} | Colonnes : {df.shape[1]}")
 
 # ==========================================================
-# SÉLECTION D’UN INDIVIDU
+# SELECTION INDIVIDU
 # ==========================================================
+st.subheader("🎯 Sélection d’un individu")
+
 row_id = st.slider("Choisir un individu", 0, len(df) - 1, 0)
-
 row = df.iloc[row_id]
 
 # ==========================================================
-# PRÉPARATION INPUT SAINT
+# PREPARATION INPUT SAINT
 # ==========================================================
 categorical_dims = metadata["categorical_dims"]
 numerical_columns = metadata["numerical_columns"]
@@ -104,15 +117,21 @@ x_cont = []
 
 for col in df.columns:
     if col in categorical_dims:
-        x_categ.append(int(row[col]))
+        value = int(row[col])
+        x_categ.append(value)
     elif col in numerical_columns:
-        x_cont.append(float(row[col]))
+        value = float(row[col])
+        x_cont.append(value)
+
+if len(x_categ) == 0 or len(x_cont) == 0:
+    st.error("Les colonnes du CSV ne correspondent pas au modèle entraîné.")
+    st.stop()
 
 x_categ = torch.tensor([x_categ], dtype=torch.long)
 x_cont = torch.tensor([x_cont], dtype=torch.float)
 
 # ==========================================================
-# PRÉDICTION
+# PREDICTION
 # ==========================================================
 with torch.no_grad():
     output = model(x_categ, x_cont)
@@ -125,23 +144,20 @@ with torch.no_grad():
 prediction = 1 if proba >= threshold else 0
 
 # ==========================================================
-# AFFICHAGE RÉSULTATS
+# RESULTATS
 # ==========================================================
 st.subheader("📈 Résultat de la prédiction")
 
-c1, c2 = st.columns(2)
+col1, col2 = st.columns(2)
 
 if prediction == 0:
-    verdict = "Faible risque"
+    verdict = "Faible risque de défaut"
 else:
-    verdict = "Risque élevé"
+    verdict = "Risque élevé de défaut"
 
-c1.metric("Décision du modèle", verdict)
-c2.metric("Probabilité de défaut", f"{proba:.2%}")
+col1.metric("Décision du modèle", verdict)
+col2.metric("Probabilité de défaut", f"{proba:.2%}")
 
-st.markdown(f"Seuil utilisé : **{threshold:.4f}**")
+st.markdown(f"Seuil appliqué : **{threshold:.4f}**")
 
-# ==========================================================
-# FIN
-# ==========================================================
 st.success("Modèle SAINT chargé dynamiquement depuis AWS S3.")
