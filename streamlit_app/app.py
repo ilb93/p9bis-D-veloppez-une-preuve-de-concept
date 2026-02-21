@@ -134,7 +134,6 @@ with st.spinner("🔄 Chargement du modèle SAINT depuis S3..."):
         model_data = load_saint_model_from_s3()
         st.success("✅ Modèle SAINT chargé avec succès!")
     except Exception as e:
-<<<<<<< HEAD
         st.error(f"❌ Impossible de charger le modèle: {str(e)}")
         import traceback
         with st.expander("🔍 Détails de l'erreur (pour débogage)"):
@@ -143,9 +142,6 @@ with st.spinner("🔄 Chargement du modèle SAINT depuis S3..."):
         st.info("1. Les secrets AWS sont configurés dans Streamlit Cloud (AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY)")
         st.info("2. Le bucket S3 'projetmodelsaint' est accessible")
         st.info("3. Les fichiers saint_weights.pth, saint_config.pkl, saint_metadata.pkl, saint_threshold.pkl existent dans le bucket")
-=======
-        st.error(f"Impossible de charger le modèle: {str(e)}")
->>>>>>> 8bddc874bb9462cf053737d0dd0ee8b8405ff96f
         st.stop()
 
 # Extraire les features attendues depuis les métadonnées
