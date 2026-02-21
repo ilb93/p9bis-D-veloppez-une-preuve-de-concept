@@ -7,6 +7,8 @@ import pickle
 from pathlib import Path
 import matplotlib.pyplot as plt
 from matplotlib.ticker import FuncFormatter
+import time
+time.sleep(15)
 
 # ======================================================
 # CONFIG STREAMLIT
