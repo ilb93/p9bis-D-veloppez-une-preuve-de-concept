@@ -406,14 +406,40 @@ if available_vars:
 # ======================================================
 def build_model_row(data, idx, expected):
     """Construit une ligne de données pour le modèle"""
-    row = {}
-    for f in expected:
-        if f in data.columns:
-            v = pd.to_numeric(data.loc[idx, f], errors="coerce")
-            row[f] = 0.0 if pd.isna(v) else float(v)
+    # Si les features attendues sont des noms génériques (feature_0, feature_1, etc.)
+    # et que le CSV a des colonnes réelles, utiliser les colonnes numériques du CSV dans l'ordre
+    if expected and all(f.startswith('feature_') for f in expected):
+        # Les features sont génériques, utiliser les colonnes numériques du CSV
+        numeric_cols = data.select_dtypes(include=[np.number]).columns.tolist()
+        if len(numeric_cols) >= len(expected):
+            # Utiliser les premières colonnes numériques dans l'ordre
+            values = []
+            for i, col in enumerate(numeric_cols[:len(expected)]):
+                v = pd.to_numeric(data.loc[idx, col], errors="coerce")
+                values.append(0.0 if pd.isna(v) else float(v))
+            # Remplir avec des zéros si nécessaire
+            while len(values) < len(expected):
+                values.append(0.0)
+            return pd.DataFrame([values], columns=expected)
         else:
-            row[f] = 0.0
-    return pd.DataFrame([row], columns=expected)
+            # Pas assez de colonnes numériques
+            st.warning(f"⚠️ Le CSV a {len(numeric_cols)} colonnes numériques mais le modèle attend {len(expected)} features")
+            values = [0.0] * len(expected)
+            for i, col in enumerate(numeric_cols):
+                if i < len(expected):
+                    v = pd.to_numeric(data.loc[idx, col], errors="coerce")
+                    values[i] = 0.0 if pd.isna(v) else float(v)
+            return pd.DataFrame([values], columns=expected)
+    else:
+        # Les features ont des noms réels, les chercher dans le CSV
+        row = {}
+        for f in expected:
+            if f in data.columns:
+                v = pd.to_numeric(data.loc[idx, f], errors="coerce")
+                row[f] = 0.0 if pd.isna(v) else float(v)
+            else:
+                row[f] = 0.0
+        return pd.DataFrame([row], columns=expected)
 
 # Déterminer les features à utiliser
 if EXPECTED_FEATURES is None:
