@@ -131,7 +131,14 @@ def load_saint_model_from_files(weights_path, config_path, metadata_path, thresh
     model = SAINTModel(config)
     
     # Charger les weights
-    weights = torch.load(weights_path, map_location=device)
+    # PyTorch 2.6+ a weights_only=True par défaut, mais notre modèle contient des objets LightGBM
+    # On doit utiliser weights_only=False pour permettre le chargement
+    try:
+        # Essayer d'abord avec weights_only=False (nécessaire pour PyTorch 2.6+)
+        weights = torch.load(weights_path, map_location=device, weights_only=False)
+    except TypeError:
+        # Pour les versions antérieures de PyTorch qui n'ont pas weights_only
+        weights = torch.load(weights_path, map_location=device)
     
     # Si c'est un state_dict, charger directement
     if isinstance(weights, dict):

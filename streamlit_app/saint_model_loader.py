@@ -58,7 +58,14 @@ def load_saint_model_from_s3(bucket_name="projetmodelsaint", region_name="eu-nor
         # Charger le fichier
         if key == "weights":
             # Charger les poids PyTorch
-            model_data[key] = torch.load(local_path, map_location='cpu')
+            # PyTorch 2.6+ a weights_only=True par défaut, mais notre modèle contient des objets LightGBM
+            # On doit utiliser weights_only=False pour permettre le chargement
+            try:
+                # Essayer d'abord avec weights_only=False (nécessaire pour PyTorch 2.6+)
+                model_data[key] = torch.load(local_path, map_location='cpu', weights_only=False)
+            except TypeError:
+                # Pour les versions antérieures de PyTorch qui n'ont pas weights_only
+                model_data[key] = torch.load(local_path, map_location='cpu')
         else:
             # Charger les fichiers pickle
             with open(local_path, 'rb') as f:
